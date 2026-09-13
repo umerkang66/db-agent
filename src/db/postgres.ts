@@ -288,7 +288,10 @@ export class PostgresAdapter implements DatabaseAdapter {
 
     const client = await this.pool!.connect();
     try {
-      const res = await client.query(sql, query.params || []);
+      const hasParams = Array.isArray(query.params) && query.params.length > 0;
+      const res = hasParams
+        ? await client.query(sql, query.params)
+        : await client.query(sql);
       const durationMs = Date.now() - startTime;
 
       let rows: any[] = [];
@@ -297,10 +300,28 @@ export class PostgresAdapter implements DatabaseAdapter {
 
       if (Array.isArray(res)) {
         // Multi-statement query result
+        let totalAffected = 0;
+        const allRows: any[] = [];
+        let lastFields: string[] = [];
+
+        for (const stmtRes of res) {
+          if (stmtRes) {
+            if (typeof stmtRes.rowCount === 'number') {
+              totalAffected += stmtRes.rowCount;
+            }
+            if (stmtRes.rows && stmtRes.rows.length > 0) {
+              allRows.push(...stmtRes.rows);
+            }
+            if (stmtRes.fields && stmtRes.fields.length > 0) {
+              lastFields = stmtRes.fields.map((f: any) => f.name);
+            }
+          }
+        }
+
         const lastResult = res[res.length - 1];
-        rows = lastResult?.rows || [];
-        fields = (lastResult?.fields || []).map((f: any) => f.name);
-        rowCount = lastResult?.rowCount ?? rows.length;
+        rows = allRows.length > 0 ? allRows : (lastResult?.rows || []);
+        fields = lastFields.length > 0 ? lastFields : (lastResult?.fields || []).map((f: any) => f.name);
+        rowCount = totalAffected > 0 ? totalAffected : (lastResult?.rowCount ?? rows.length);
       } else if (res) {
         rows = res.rows || [];
         fields = (res.fields || []).map((f: any) => f.name);
@@ -314,7 +335,7 @@ export class PostgresAdapter implements DatabaseAdapter {
         rowCount,
         affectedRows: rowCount,
         durationMs,
-        command: Array.isArray(res) ? res[res.length - 1]?.command : res?.command,
+        command: Array.isArray(res) ? res.map((r) => r?.command).filter(Boolean).join('; ') : res?.command,
       };
     } catch (err: any) {
       const durationMs = Date.now() - startTime;

@@ -259,3 +259,164 @@ describe('Guardrails and Strict Wipe Enforcement', () => {
     expect(res3.isDatabaseTask).toBe(true);
   });
 });
+
+describe('Database Admin Tasks Classification & --allow-full-wipe Enforcement', () => {
+  it('classifies PostgreSQL GRANT and REVOKE as admin tasks', () => {
+    const grantRes = classifyQuery({ sql: 'GRANT SELECT ON users TO reader;', rawDisplay: 'GRANT SELECT ON users TO reader;' }, 'postgres');
+    expect(grantRes.category).toBe('admin');
+    expect(grantRes.isAdmin).toBe(true);
+    expect(grantRes.isDestructive).toBe(false);
+
+    const revokeRes = classifyQuery({ sql: 'REVOKE ALL ON users FROM public;', rawDisplay: 'REVOKE ALL ON users FROM public;' }, 'postgres');
+    expect(revokeRes.category).toBe('admin');
+    expect(revokeRes.isAdmin).toBe(true);
+  });
+
+  it('classifies PostgreSQL user/role creation and drops as admin tasks', () => {
+    const createRoleRes = classifyQuery({ sql: 'CREATE ROLE analyst WITH LOGIN;', rawDisplay: 'CREATE ROLE analyst WITH LOGIN;' }, 'postgres');
+    expect(createRoleRes.category).toBe('admin');
+    expect(createRoleRes.isAdmin).toBe(true);
+    expect(createRoleRes.isDestructive).toBe(false);
+
+    const dropRoleRes = classifyQuery({ sql: 'DROP ROLE analyst;', rawDisplay: 'DROP ROLE analyst;' }, 'postgres');
+    expect(dropRoleRes.category).toBe('admin');
+    expect(dropRoleRes.isAdmin).toBe(true);
+    expect(dropRoleRes.isDestructive).toBe(true);
+    expect(dropRoleRes.requiresLiteralWord).toBe(true);
+    expect(dropRoleRes.literalWord).toBe('DROP ROLE');
+
+    const dropUserRes = classifyQuery({ sql: 'DROP USER old_user;', rawDisplay: 'DROP USER old_user;' }, 'postgres');
+    expect(dropUserRes.category).toBe('admin');
+    expect(dropUserRes.isAdmin).toBe(true);
+    expect(dropUserRes.isDestructive).toBe(true);
+    expect(dropUserRes.literalWord).toBe('DROP USER');
+  });
+
+  it('classifies PostgreSQL maintenance operations (VACUUM, REINDEX, CHECKPOINT) as admin tasks', () => {
+    const vacuumRes = classifyQuery({ sql: 'VACUUM ANALYZE users;', rawDisplay: 'VACUUM ANALYZE users;' }, 'postgres');
+    expect(vacuumRes.category).toBe('admin');
+    expect(vacuumRes.isAdmin).toBe(true);
+
+    const vacuumFullRes = classifyQuery({ sql: 'VACUUM FULL users;', rawDisplay: 'VACUUM FULL users;' }, 'postgres');
+    expect(vacuumFullRes.category).toBe('admin');
+    expect(vacuumFullRes.isAdmin).toBe(true);
+    expect(vacuumFullRes.warnings.some((w) => w.includes('exclusively locks'))).toBe(true);
+
+    const reindexRes = classifyQuery({ sql: 'REINDEX TABLE users;', rawDisplay: 'REINDEX TABLE users;' }, 'postgres');
+    expect(reindexRes.category).toBe('admin');
+    expect(reindexRes.isAdmin).toBe(true);
+
+    const checkpointRes = classifyQuery({ sql: 'CHECKPOINT;', rawDisplay: 'CHECKPOINT;' }, 'postgres');
+    expect(checkpointRes.category).toBe('admin');
+    expect(checkpointRes.isAdmin).toBe(true);
+  });
+
+  it('classifies pg_terminate_backend and ALTER SYSTEM as admin tasks', () => {
+    const killRes = classifyQuery({ sql: 'SELECT pg_terminate_backend(1234);', rawDisplay: 'SELECT pg_terminate_backend(1234);' }, 'postgres');
+    expect(killRes.category).toBe('admin');
+    expect(killRes.isAdmin).toBe(true);
+    expect(killRes.isDestructive).toBe(true);
+
+    const alterSysRes = classifyQuery({ sql: "ALTER SYSTEM SET work_mem = '64MB';", rawDisplay: "ALTER SYSTEM SET work_mem = '64MB';" }, 'postgres');
+    expect(alterSysRes.category).toBe('admin');
+    expect(alterSysRes.isAdmin).toBe(true);
+  });
+
+  it('classifies MongoDB admin tasks (dropDatabase, createUser, dropUser, compact)', () => {
+    const dropDb = classifyQuery({ operation: 'dropDatabase', rawDisplay: '{"operation": "dropDatabase"}' }, 'mongodb');
+    expect(dropDb.category).toBe('full_wipe');
+    expect(dropDb.isAdmin).toBe(true);
+    expect(dropDb.isFullWipe).toBe(true);
+
+    const createUser = classifyQuery({ operation: 'createUser', rawDisplay: '{"operation": "createUser"}' }, 'mongodb');
+    expect(createUser.category).toBe('admin');
+    expect(createUser.isAdmin).toBe(true);
+
+    const dropUser = classifyQuery({ operation: 'dropUser', rawDisplay: '{"operation": "dropUser"}' }, 'mongodb');
+    expect(dropUser.category).toBe('admin');
+    expect(dropUser.isAdmin).toBe(true);
+    expect(dropUser.isDestructive).toBe(true);
+    expect(dropUser.literalWord).toBe('DROP USER');
+  });
+
+  it('hard-blocks admin tasks when strictMode is ON and allowFullWipe is false', () => {
+    const adminQuery = classifyQuery({ sql: 'GRANT ALL ON users TO app_admin;', rawDisplay: 'GRANT ALL ON users TO app_admin;' }, 'postgres');
+    const result = checkStrictWipe(adminQuery, { strictMode: true, allowFullWipe: false });
+
+    expect(result.blocked).toBe(true);
+    expect(result.message).toContain('database admin tasks are prohibited');
+    expect(result.message).toContain('--allow-full-wipe');
+  });
+
+  it('allows db admin tasks when --allow-full-wipe is true', () => {
+    const adminQuery = classifyQuery({ sql: 'GRANT ALL ON users TO app_admin;', rawDisplay: 'GRANT ALL ON users TO app_admin;' }, 'postgres');
+    const result = checkStrictWipe(adminQuery, { strictMode: true, allowFullWipe: true });
+
+    expect(result.blocked).toBe(false);
+  });
+
+  it('classifies natural language database admin requests as database tasks in intent guardrail', async () => {
+    const task1 = await classifyIntent('grant select on users to reporter');
+    expect(task1.isDatabaseTask).toBe(true);
+
+    const task2 = await classifyIntent('vacuum analyze the users table');
+    expect(task2.isDatabaseTask).toBe(true);
+
+    const task3 = await classifyIntent('reindex the database');
+    expect(task3.isDatabaseTask).toBe(true);
+
+    const task4 = await classifyIntent('terminate active connection process 5432');
+    expect(task4.isDatabaseTask).toBe(true);
+  });
+
+  it('classifies multi-table CREATE TABLE and INSERT INTO as structural with seed data explanation', () => {
+    const multiSql = `
+      CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, name TEXT);
+      CREATE TABLE IF NOT EXISTS spendings (id SERIAL PRIMARY KEY, customer_id INT, amount NUMERIC);
+      INSERT INTO customers (name) VALUES ('Alice');
+      INSERT INTO spendings (customer_id, amount) VALUES (1, 100);
+    `;
+    const res = classifyQuery({ sql: multiSql, rawDisplay: multiSql }, 'postgres');
+
+    expect(res.category).toBe('structural');
+    expect(res.isStructural).toBe(true);
+    expect(res.isDestructive).toBe(false);
+    expect(res.requiresLiteralWord).toBe(false);
+    expect(res.explanation).toContain('customers, spendings');
+    expect(res.explanation).toContain('populates seed data');
+  });
+
+  it('detects dangerous DROP TABLE even when hidden in stacked statements', () => {
+    const stackedSql = `
+      CREATE TABLE foo (id INT);
+      DROP TABLE audit_logs;
+    `;
+    const res = classifyQuery({ sql: stackedSql, rawDisplay: stackedSql }, 'postgres');
+
+    expect(res.category).toBe('dangerous');
+    expect(res.isDestructive).toBe(true);
+    expect(res.requiresLiteralWord).toBe(true);
+    expect(res.literalWord).toBe('DROP TABLE');
+  });
+
+  it('classifies MongoDB multi-collection operations correctly', () => {
+    const multiOp = {
+      rawDisplay: 'multi-op',
+      operations: [
+        { collection: 'users', operation: 'insertMany', documents: [{ name: 'Alice' }] },
+        { collection: 'orders', operation: 'insertMany', documents: [{ orderId: 101 }] },
+      ],
+    };
+    const res = classifyQuery(multiOp, 'mongodb');
+
+    expect(res.category).toBe('write');
+    expect(res.isDestructive).toBe(false);
+    expect(res.explanation).toContain('users, orders');
+  });
+
+  it('classifies fake data seeding requests as database tasks in intent guardrail', async () => {
+    const prompt = 'add fake users, and their spendings in a different tables, and what they bought how much they bought in a different tables.';
+    const res = await classifyIntent(prompt);
+    expect(res.isDatabaseTask).toBe(true);
+  });
+});

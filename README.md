@@ -136,7 +136,7 @@ npx sandal-db@latest md [options] [fileOrText]
 | `-k, --key <key>`       | `string`  | API key corresponding to the selected provider.                                    | Environment / Config |
 | `--strict`              | `boolean` | Hard-blocks full database drops and bulk table truncations.                        | `true`               |
 | `--no-strict`           | `flag`    | Disables strict safety mode.                                                       | `false`              |
-| `--allow-full-wipe`     | `flag`    | Explicitly permits database-level drops after interactive phrase confirmation.     | `false`              |
+| `--allow-full-wipe`     | `flag`    | Explicitly permits full database wipes and db admin tasks after interactive confirmation. | `false`              |
 | `--threshold <number>`  | `integer` | Row count threshold above which updates are classified as dangerous operations.    | `50`                 |
 | `--markdown`            | `boolean` | Formats and renders LLM responses as rich terminal markdown.                       | `true`               |
 | `--no-markdown`         | `flag`    | Disables terminal markdown rendering and outputs raw text.                         | `false`              |
@@ -404,16 +404,16 @@ Any mutation query lacking a filter or `WHERE` clause poses extreme operational 
 ? Destructive operation with no filter. Type "DELETE ALL" to confirm:
 ```
 
-### 6. Strict Mode and Full-Wipe Hard Blocking
+### 6. Strict Mode, Full-Wipe, and Admin Tasks Guardrails
 
-By default, `--strict` mode is enabled. Any operation that attempts to drop an entire database or drop all tables is blocked unconditionally:
+By default, `--strict` mode is enabled and `--allow-full-wipe` is disabled. Any operation that attempts to drop an entire database, drop all tables, or execute database administration tasks (e.g. user/role drops, privilege changes, maintenance locks, backend termination) is blocked unconditionally:
 
 ```text
-Operation blocked by --strict mode: full database or all-table drop is prohibited.
+Operation blocked by --strict mode: database admin tasks are prohibited.
 To allow this, start sandal-db with --allow-full-wipe.
 ```
 
-To permit database-level destructions, the user must explicitly supply `--allow-full-wipe` at startup and subsequently type the required confirmation string during interactive execution.
+To permit database-level destructions and administrative tasks, the user must explicitly supply `--allow-full-wipe` at startup and subsequently confirm the operation during interactive execution.
 
 ---
 

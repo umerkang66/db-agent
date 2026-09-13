@@ -51,7 +51,7 @@ program
   .option('--no-strict', 'Disable strict safety mode')
   .option(
     '--allow-full-wipe',
-    'Explicitly allow full database / all-table wipe queries with confirmation',
+    'Explicitly allow full database / all-table wipe queries and db admin tasks with confirmation',
     false,
   )
   .option(

@@ -181,6 +181,43 @@ export class MongoAdapter implements DatabaseAdapter {
         };
       }
 
+      // 1b. Multi-operation support (e.g. multi-collection fake data seeding)
+      let operationsList = query.operations;
+      if (!operationsList && typeof query.rawDisplay === 'string') {
+        try {
+          const parsedDisplay = JSON.parse(query.rawDisplay);
+          if (Array.isArray(parsedDisplay.operations)) {
+            operationsList = parsedDisplay.operations;
+          }
+        } catch {
+          // not json
+        }
+      }
+
+      if (Array.isArray(operationsList) && operationsList.length > 0) {
+        let totalAffected = 0;
+        const allRows: any[] = [];
+        for (const op of operationsList) {
+          const subResult = await this.executeQuery({
+            ...op,
+            rawDisplay: typeof op === 'string' ? op : JSON.stringify(op),
+          });
+          if (!subResult.success) {
+            return subResult;
+          }
+          totalAffected += subResult.affectedRows ?? subResult.rowCount ?? 0;
+          if (subResult.rows) allRows.push(...subResult.rows);
+        }
+        return {
+          success: true,
+          rows: allRows,
+          rowCount: allRows.length,
+          affectedRows: totalAffected,
+          durationMs: Date.now() - startTime,
+          command: 'multi-operation',
+        };
+      }
+
       // 2. Parse from query properties or try parsing JSON display
       let collectionName = query.collection;
       let operation = query.operation;
@@ -209,6 +246,19 @@ export class MongoAdapter implements DatabaseAdapter {
       }
 
       if (!collectionName) {
+        if (operation === 'dropDatabase') {
+          const res = await db.dropDatabase();
+          const durationMs = Date.now() - startTime;
+          return {
+            success: true,
+            rows: [{ droppedDatabase: res }],
+            rowCount: res ? 1 : 0,
+            affectedRows: 0,
+            fields: ['droppedDatabase'],
+            durationMs,
+            command: 'dropDatabase',
+          };
+        }
         throw new Error('Mongo operation requires a target collection.');
       }
 
@@ -300,6 +350,12 @@ export class MongoAdapter implements DatabaseAdapter {
           rowCount = 1;
           break;
         }
+        case 'dropDatabase': {
+          const res = await db.dropDatabase();
+          rows = [{ droppedDatabase: res }];
+          rowCount = res ? 1 : 0;
+          break;
+        }
         default:
           throw new Error(`Unsupported MongoDB operation: ${operation}`);
       }
@@ -332,6 +388,19 @@ export class MongoAdapter implements DatabaseAdapter {
     }
 
     try {
+      if (Array.isArray(query.operations)) {
+        let total = 0;
+        for (const op of query.operations) {
+          const opObj: ExecutableQuery =
+            typeof op === 'object' && op !== null && op.rawDisplay
+              ? (op as ExecutableQuery)
+              : { ...op, rawDisplay: JSON.stringify(op) };
+          const count = await this.dryRunCount(opObj);
+          if (count !== null) total += count;
+        }
+        return total > 0 ? total : null;
+      }
+
       let collectionName = query.collection;
       let operation = query.operation;
       let filter = query.filter || {};

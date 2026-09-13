@@ -148,9 +148,11 @@ export function createDatabaseAgent(config: GraphConfig) {
 
     // 2. Obvious live database queries (SQL / Mongo or direct table retrieval)
     const isObviousLiveQuery =
-      /^(?:SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE)\b/i.test(userInput) ||
-      /^(?:find|search|fetch|get|select|show|display|list|count|delete|update|insert|remove)\s+(?:all\s+|the\s+|every\s+|top\s+\d+\s+)?(?:users?|orders?|products?|customers?|items?|rows?|records?|documents?|accounts?|entries)\b/i.test(userInput) ||
-      /\bhow\s+many\s+(?:users|orders|products|items|rows|records|documents|customers|accounts)\b/i.test(userInput);
+      /^(?:SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE|VACUUM|REINDEX|CHECKPOINT|DISCARD|LOCK)\b/i.test(userInput) ||
+      /\b(?:add|insert|populate|seed|generate|mock|create|make|fill|build|setup|load|import)\s+(?:fake\s+|mock\s+|sample\s+|test\s+|some\s+|new\s+|\d+\s+)?(?:users?|orders?|products?|customers?|items?|rows?|records?|documents?|accounts?|entries|data|tables?|collections?|spendings?|purchases?|transactions?|sales?)\b/i.test(userInput) ||
+      /^(?:find|search|fetch|get|select|show|display|list|count|delete|update|insert|remove|add|seed|populate)\s+(?:all\s+|the\s+|every\s+|top\s+\d+\s+)?(?:users?|orders?|products?|customers?|items?|rows?|records?|documents?|accounts?|entries|spendings?|purchases?|transactions?)\b/i.test(userInput) ||
+      /\bhow\s+many\s+(?:users|orders|products|items|rows|records|documents|customers|accounts)\b/i.test(userInput) ||
+      /\b(?:grant|revoke|vacuum|reindex|checkpoint|kill\s+query|terminate\s+backend|drop\s+database|wipe\s+database|create\s+(?:user|role)|drop\s+(?:user|role)|alter\s+(?:user|role|system|database))\b/i.test(userInput);
 
     if (isObviousLiveQuery) {
       return {
@@ -179,11 +181,18 @@ export function createDatabaseAgent(config: GraphConfig) {
     }
 
     // 4. Schema or meta question (when schema is already available)
+    // NOTE: Any request containing mutation or data actions is NOT a read-only schema question
+    const isMutationOrAction = /\b(?:add|insert|create|populate|seed|generate|mock|make|fill|build|setup|drop|delete|update|alter|truncate|remove)\b/i.test(userInput);
+
     const isSchemaOrMetaQuestion =
-      /\b(?:schema|database\s+structure)\b/i.test(userInput) ||
-      /\b(?:explain|describe|what|tell\s+me\s+about)\b.*?\b(?:tables?|collections?|columns?|indexes?|foreign\s+keys?|schema)\b/i.test(userInput) ||
-      /\b(?:what\s+(?:tables|collections|columns)\s+(?:exist|are\s+there|do\s+we\s+have))\b/i.test(userInput) ||
-      /\b(?:what\s+was\s+the\s+(?:last|previous)\s+query|why\s+did\s+(?:the\s+last\s+query|it)\s+fail)\b/i.test(userInput);
+      !isMutationOrAction &&
+      (
+        /\b(?:what|which)\s+(?:tables|collections|columns|indexes)\s+(?:exist|are\s+there|do\s+we\s+have|are\s+available)\b/i.test(userInput) ||
+        /\b(?:show|list|describe|explain|print|display|view)\s+(?:the\s+)?(?:schema|tables?|collections?|columns?|indexes?|foreign\s+keys?|database\s+structure)\b/i.test(userInput) ||
+        /\b(?:explain|describe|show|list)\s+what\s+(?:tables|collections|columns|indexes)\b/i.test(userInput) ||
+        /\b(?:what\s+is\s+the\s+(?:schema|database\s+structure))\b/i.test(userInput) ||
+        /\b(?:what\s+was\s+the\s+(?:last|previous)\s+query|why\s+did\s+(?:the\s+last\s+query|it)\s+fail)\b/i.test(userInput)
+      );
 
     if (isSchemaOrMetaQuestion && (state.schemaSummary || state.messages.length > 0)) {
       return {
@@ -209,8 +218,8 @@ Recent Context:
 Rules:
 1. If the user explicitly asks NOT to run a query (e.g., "don't run query", "without querying", "do not execute queries"), requiresQuery MUST be false.
 2. If the user asks to format, summarize, filter, inspect, or calculate based on the previous results or conversation context, requiresQuery MUST be false.
-3. If the user asks about the schema structure, columns, or general knowledge answerable from context, requiresQuery MUST be false.
-4. If the user asks to retrieve fresh records from a table/collection, count rows in the database, modify, insert, delete, or create database objects, requiresQuery MUST be true.
+3. If the user asks purely about the existing schema structure, list of tables/columns, or general knowledge answerable from context, requiresQuery MUST be false.
+4. If the user asks to retrieve fresh records from a table/collection, count rows in the database, modify, insert, delete, create database objects, or generate/populate/seed fake, mock, or sample data (including creating tables for it), requiresQuery MUST be true.
 
 Respond with JSON only:
 {"requiresQuery": boolean, "reason": "<short explanation>"}`;
@@ -248,10 +257,11 @@ Respond with JSON only:
     const historyMessages: BaseMessage[] = state.messages.slice(-4);
     const prompt = `Based on this user request: "${state.userInput}"
 And the available database schema:
-${state.schemaSummary}
+${state.schemaSummary || 'No schema loaded.'}
 
 List the relevant table names (PostgreSQL) or collection names (MongoDB) needed to fulfill the request.
-Respond with a JSON array of string names only, e.g. ["users", "orders"]. Do not include markdown codeblocks or extra text.`;
+Include existing tables as well as any new tables or collections that should be created or populated for this request.
+Respond with a JSON array of string names only, e.g. ["users", "spendings", "products"]. Do not include markdown codeblocks or extra text.`;
 
     try {
       const response = await model.invoke([
@@ -269,7 +279,9 @@ Respond with a JSON array of string names only, e.g. ["users", "orders"]. Do not
 
   // Node 3: generate_query
   async function generateQueryNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
-    const systemPrompt = getSystemPrompt(adapter.type, state.schemaSummary);
+    const systemPrompt = getSystemPrompt(adapter.type, state.schemaSummary, {
+      allowFullWipe: classifierOptions?.allowFullWipe,
+    });
 
     const historyMessages: BaseMessage[] = state.messages.slice(-6); // last 3 turns
     const userPrompt = `User request: "${state.userInput}"
@@ -305,7 +317,7 @@ Do not wrap with markdown or code fences.`;
         rawDisplay: sql,
       };
     } else {
-      if (parsed && parsed.collection && parsed.operation) {
+      if (parsed && ((parsed.collection && parsed.operation) || parsed.operations)) {
         query = {
           collection: parsed.collection,
           operation: parsed.operation,
@@ -315,6 +327,7 @@ Do not wrap with markdown or code fences.`;
           document: parsed.document,
           documents: parsed.documents,
           options: parsed.options,
+          operations: parsed.operations,
           rawDisplay: JSON.stringify(parsed, null, 2),
         };
       } else {
@@ -396,12 +409,29 @@ Do not wrap with markdown or code fences.`;
 
     const result = await adapter.executeQuery(state.generatedQuery);
 
-    // If structural query succeeded, mark schema refresh for next turn
-    const isStructuralSuccess = Boolean(state.safety?.isStructural && result.success);
+    // If structural, admin, or wipe query succeeded, mark schema refresh and update immediately
+    const isStructuralSuccess = Boolean(
+      (state.safety?.isStructural || state.safety?.isAdmin || state.safety?.isFullWipe) &&
+        result.success
+    );
+
+    let updatedSchema = state.schema;
+    let updatedSummary = state.schemaSummary;
+
+    if (isStructuralSuccess) {
+      try {
+        updatedSchema = await adapter.inspectSchema(true);
+        updatedSummary = updatedSchema ? formatSchemaForPrompt(updatedSchema) : state.schemaSummary;
+      } catch {
+        // Schema inspection error shouldn't block execution result
+      }
+    }
 
     return {
       queryResult: result,
-      requiresSchemaRefresh: isStructuralSuccess,
+      schema: updatedSchema,
+      schemaSummary: updatedSummary,
+      requiresSchemaRefresh: false,
     };
   }
 
@@ -557,8 +587,7 @@ Guidelines:
 1. Provide a direct, helpful, and accurate natural-language response to the user's request.
 2. If the user asked to do something with previous results (e.g. summarize, format, count, calculate, extract, sort), perform that operation using the PREVIOUS QUERY EXECUTION DETAILS above.
 3. If the user asked to use previous results but NO previous results exist in the session, politely explain that no previous query results are available in this session.
-4. DO NOT output, execute, or propose any new database queries.
-5. Ground your answer strictly in the available schema, history, or previous query results. Never hallucinate data.`;
+4. Ground your answer strictly in the available schema, history, or previous query results. Never hallucinate data.`;
 
     try {
       const response = await model.invoke([

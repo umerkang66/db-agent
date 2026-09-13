@@ -149,4 +149,48 @@ describe('Safety Confirmation & Input Handling', () => {
     await requestUserConfirmation(query, safety, null, async () => 'y');
     expect(process.stdin.isPaused()).toBe(false);
   });
+
+  it('handles database admin operation confirmation correctly', async () => {
+    const query: ExecutableQuery = { sql: 'GRANT SELECT ON users TO reader;', rawDisplay: 'GRANT SELECT ON users TO reader;' };
+    const safety: SafetyClassification = {
+      category: 'admin',
+      isDestructive: false,
+      isStructural: false,
+      isFullWipe: false,
+      isAdmin: true,
+      requiresLiteralWord: false,
+      hasWhereClause: false,
+      explanation: 'Grants database privileges.',
+      warnings: [],
+    };
+
+    // Confirmed with 'y'
+    const resYes = await requestUserConfirmation(query, safety, null, async () => 'y');
+    expect(resYes.confirmed).toBe(true);
+
+    // Cancelled with 'n'
+    const resNo = await requestUserConfirmation(query, safety, null, async () => 'n');
+    expect(resNo.confirmed).toBe(false);
+
+    // Destructive admin task with literal word
+    const dropUserQuery: ExecutableQuery = { sql: 'DROP USER test_user;', rawDisplay: 'DROP USER test_user;' };
+    const dropUserSafety: SafetyClassification = {
+      category: 'admin',
+      isDestructive: true,
+      isStructural: false,
+      isFullWipe: false,
+      isAdmin: true,
+      requiresLiteralWord: true,
+      literalWord: 'DROP USER',
+      hasWhereClause: false,
+      warnings: ['Permanently deletes credentials.'],
+    };
+
+    const mismatch = await requestUserConfirmation(dropUserQuery, dropUserSafety, null, async () => 'wrong');
+    expect(mismatch.confirmed).toBe(false);
+    expect(mismatch.reason).toContain('Confirmation word mismatch');
+
+    const match = await requestUserConfirmation(dropUserQuery, dropUserSafety, null, async () => 'DROP USER');
+    expect(match.confirmed).toBe(true);
+  });
 });

@@ -74,9 +74,18 @@ export interface ExecutableQuery {
     | 'deleteOne'
     | 'deleteMany'
     | 'drop'
+    | 'dropDatabase'
     | 'createIndex'
     | 'createCollection'
-    | 'command';
+    | 'createUser'
+    | 'dropUser'
+    | 'grantRolesToUser'
+    | 'revokeRolesFromUser'
+    | 'repairDatabase'
+    | 'compact'
+    | 'reIndex'
+    | 'command'
+    | (string & {});
   filter?: Record<string, any>;
   update?: Record<string, any>;
   pipeline?: Record<string, any>[];
@@ -84,6 +93,7 @@ export interface ExecutableQuery {
   documents?: Record<string, any>[];
   options?: Record<string, any>;
   rawCommand?: Record<string, any>;
+  operations?: Array<Record<string, any>>;
 
   // Raw display string representation (SQL query or JSON command string)
   rawDisplay: string;

@@ -130,20 +130,33 @@ describe('Configuration & Credential Masking', () => {
         '../src/config/index.js'
       );
 
-      writeConfig({
-        geminiApiKey: 'gemini-key-123',
-        openaiApiKey: 'openai-key-456',
-        anthropicApiKey: 'anthropic-key-789',
-      });
+      const oldGemini = process.env.GEMINI_API_KEY;
+      const oldOpenai = process.env.OPENAI_API_KEY;
+      const oldAnthropic = process.env.ANTHROPIC_API_KEY;
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
 
-      expect(getStoredApiKeyForProvider('google')).toBe('gemini-key-123');
-      expect(getStoredApiKeyForProvider('openai')).toBe('openai-key-456');
-      expect(getStoredApiKeyForProvider('anthropic')).toBe('anthropic-key-789');
+      try {
+        writeConfig({
+          geminiApiKey: 'gemini-key-123',
+          openaiApiKey: 'openai-key-456',
+          anthropicApiKey: 'anthropic-key-789',
+        });
 
-      removeApiKey('all');
-      expect(getStoredApiKeyForProvider('google')).toBeUndefined();
-      expect(getStoredApiKeyForProvider('openai')).toBeUndefined();
-      expect(getStoredApiKeyForProvider('anthropic')).toBeUndefined();
+        expect(getStoredApiKeyForProvider('google')).toBe('gemini-key-123');
+        expect(getStoredApiKeyForProvider('openai')).toBe('openai-key-456');
+        expect(getStoredApiKeyForProvider('anthropic')).toBe('anthropic-key-789');
+
+        removeApiKey('all');
+        expect(getStoredApiKeyForProvider('google')).toBeUndefined();
+        expect(getStoredApiKeyForProvider('openai')).toBeUndefined();
+        expect(getStoredApiKeyForProvider('anthropic')).toBeUndefined();
+      } finally {
+        if (oldGemini !== undefined) process.env.GEMINI_API_KEY = oldGemini;
+        if (oldOpenai !== undefined) process.env.OPENAI_API_KEY = oldOpenai;
+        if (oldAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = oldAnthropic;
+      }
     });
   });
 });

@@ -371,4 +371,195 @@ describe('Database Agent - Conditional Query Execution & No-Query Safeguards', (
     expect(mongoAdapter.executeQuery).toHaveBeenCalledTimes(1); // Still 1!
     expect(turn2.conclusion).toContain('Average price from previous results is $64.');
   });
+
+  it('blocks db admin tasks when strictMode is ON and allowFullWipe is false', async () => {
+    const adapter = createMockAdapter();
+    const confirmFn = vi.fn().mockResolvedValue({ confirmed: true });
+
+    const model = new MockChatModel(async (messages: BaseMessage[]) => {
+      const lastMsg = messages[messages.length - 1].content.toString();
+      if (lastMsg.includes('Generate the appropriate database query')) {
+        return new AIMessage(JSON.stringify({ sql: 'GRANT ALL PRIVILEGES ON TABLE users TO superuser;' }));
+      }
+      return new AIMessage('Granted privileges.');
+    });
+
+    const agent = createDatabaseAgent({
+      adapter,
+      model,
+      confirmFn,
+      classifierOptions: { strictMode: true, allowFullWipe: false },
+    });
+
+    const result = await agent.invoke(
+      { userInput: 'grant all privileges on table users to superuser' },
+      { configurable: { thread_id: 'admin-blocked-session' } }
+    );
+
+    expect(result.queryExecuted).toBe(false);
+    expect(result.conclusion).toContain('Operation blocked by --strict mode: database admin tasks are prohibited');
+    expect(result.conclusion).toContain('--allow-full-wipe');
+    expect(adapter.executeQuery).not.toHaveBeenCalled();
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+
+  it('allows and executes db admin tasks when allowFullWipe is true', async () => {
+    const adapter = createMockAdapter();
+    const confirmFn = vi.fn().mockResolvedValue({ confirmed: true });
+
+    let systemPromptUsed = '';
+    const model = new MockChatModel(async (messages: BaseMessage[]) => {
+      for (const m of messages) {
+        if (m._getType() === 'system') {
+          systemPromptUsed = m.content.toString();
+        }
+      }
+      const lastMsg = messages[messages.length - 1].content.toString();
+      if (lastMsg.includes('Generate the appropriate database query')) {
+        return new AIMessage(JSON.stringify({ sql: 'VACUUM ANALYZE users;' }));
+      }
+      return new AIMessage('VACUUM ANALYZE completed successfully.');
+    });
+
+    const agent = createDatabaseAgent({
+      adapter,
+      model,
+      confirmFn,
+      classifierOptions: { strictMode: true, allowFullWipe: true },
+    });
+
+    const result = await agent.invoke(
+      { userInput: 'vacuum analyze users' },
+      { configurable: { thread_id: 'admin-allowed-session' } }
+    );
+
+    expect(systemPromptUsed).toContain('--allow-full-wipe ENABLED');
+    expect(result.queryExecuted).toBe(true);
+    expect(result.generatedQuery?.sql).toBe('VACUUM ANALYZE users;');
+    expect(adapter.executeQuery).toHaveBeenCalledTimes(1);
+    expect(confirmFn).toHaveBeenCalledTimes(1);
+    expect(result.conclusion).toContain('VACUUM ANALYZE completed');
+  });
+
+  it('correctly routes complex multi-table creation and fake data seeding to live execution', async () => {
+    const adapter = createMockAdapter();
+    const confirmFn = vi.fn().mockResolvedValue({ confirmed: true });
+
+    const complexSql = `
+      CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, name VARCHAR(100), email VARCHAR(100));
+      CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, title VARCHAR(100), price NUMERIC(10,2));
+      CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, customer_id INT REFERENCES customers(id), total NUMERIC(10,2));
+      CREATE TABLE IF NOT EXISTS order_items (id SERIAL PRIMARY KEY, order_id INT REFERENCES orders(id), product_id INT REFERENCES products(id), quantity INT);
+      INSERT INTO customers (name, email) VALUES ('Alice Smith', 'alice@example.com'), ('Bob Jones', 'bob@example.com');
+      INSERT INTO products (title, price) VALUES ('Running Shoes', 89.99), ('Water Bottle', 15.50);
+      INSERT INTO orders (customer_id, total) VALUES (1, 105.49);
+      INSERT INTO order_items (order_id, product_id, quantity) VALUES (1, 1, 1), (1, 2, 1);
+    `.trim();
+
+    const model = new MockChatModel(async (messages: BaseMessage[]) => {
+      const lastMsg = messages[messages.length - 1].content.toString();
+      if (lastMsg.includes('relevant table names')) {
+        return new AIMessage('["customers", "products", "orders", "order_items"]');
+      }
+      if (lastMsg.includes('Generate the appropriate database query')) {
+        return new AIMessage(
+          JSON.stringify({
+            type: 'postgres',
+            sql: complexSql,
+            params: [],
+            explanation: 'Creates customers, products, orders, and order_items tables and inserts fake seed records.',
+          })
+        );
+      }
+      return new AIMessage('Successfully created tables (customers, products, orders, order_items) and seeded fake users, purchases, and spendings data.');
+    });
+
+    const agent = createDatabaseAgent({
+      adapter,
+      model,
+      confirmFn,
+    });
+
+    const userInput = 'add fake users, and their spendings in a different tables, and what they bought how much they bought in a different tables.';
+    const result = await agent.invoke(
+      { userInput },
+      { configurable: { thread_id: 'complex-seeding-session' } }
+    );
+
+    expect(result.queryExecuted).toBe(true);
+    expect(result.generatedQuery?.sql).toContain('CREATE TABLE IF NOT EXISTS customers');
+    expect(result.generatedQuery?.sql).toContain('INSERT INTO customers');
+    expect(result.generatedQuery?.sql).toContain('INSERT INTO order_items');
+    expect(adapter.executeQuery).toHaveBeenCalledTimes(1);
+    expect(confirmFn).toHaveBeenCalledTimes(1);
+    expect(result.conclusion).toContain('Successfully created tables');
+  });
+
+  it('handles MongoDB multi-collection fake data seeding in a single operation', async () => {
+    const mongoSchema: DatabaseSchema = {
+      type: 'mongodb',
+      databaseName: 'shop',
+      collections: [],
+      inspectedAt: new Date(),
+    };
+
+    const mongoAdapter: DatabaseAdapter = {
+      type: 'mongodb',
+      databaseName: 'shop',
+      connectionUrl: 'mongodb://localhost:27017/shop',
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      isConnected: vi.fn().mockReturnValue(true),
+      inspectSchema: vi.fn().mockResolvedValue(mongoSchema),
+      executeQuery: vi.fn().mockResolvedValue({
+        success: true,
+        rows: [{ acknowledged: true }],
+        rowCount: 4,
+        affectedRows: 4,
+        durationMs: 5,
+        command: 'multi-operation',
+      }),
+      dryRunCount: vi.fn().mockResolvedValue(null),
+      explainQuery: vi.fn().mockResolvedValue(''),
+      getMaskedUrl: vi.fn().mockReturnValue('mongodb://localhost:27017/shop'),
+    };
+
+    const confirmFn = vi.fn().mockResolvedValue({ confirmed: true });
+
+    const model = new MockChatModel(async (messages: BaseMessage[]) => {
+      const lastMsg = messages[messages.length - 1].content.toString();
+      if (lastMsg.includes('relevant table names')) {
+        return new AIMessage('["users", "spendings", "purchases"]');
+      }
+      if (lastMsg.includes('Generate the appropriate database query')) {
+        return new AIMessage(
+          JSON.stringify({
+            type: 'mongodb',
+            operations: [
+              { collection: 'users', operation: 'insertMany', documents: [{ name: 'Alice' }, { name: 'Bob' }] },
+              { collection: 'spendings', operation: 'insertMany', documents: [{ user: 'Alice', amount: 150 }] },
+            ],
+            explanation: 'Seeds users and spendings collections with mock data.',
+          })
+        );
+      }
+      return new AIMessage('Successfully seeded users and spendings collections.');
+    });
+
+    const agent = createDatabaseAgent({
+      adapter: mongoAdapter,
+      model,
+      confirmFn,
+    });
+
+    const result = await agent.invoke(
+      { userInput: 'add fake users, and their spendings in a different collections' },
+      { configurable: { thread_id: 'mongo-seeding-session' } }
+    );
+
+    expect(result.queryExecuted).toBe(true);
+    expect(mongoAdapter.executeQuery).toHaveBeenCalledTimes(1);
+    expect(confirmFn).toHaveBeenCalledTimes(1);
+    expect(result.conclusion).toContain('Successfully seeded');
+  });
 });

@@ -155,6 +155,58 @@ export async function requestUserConfirmation(
     return { confirmed: answer };
   }
 
+  // 2b. DATABASE ADMIN OPERATION (GRANT, REVOKE, VACUUM, REINDEX, CREATE/DROP USER/ROLE, etc.)
+  if (safety.category === 'admin' || safety.isAdmin) {
+    const lines = [
+      chalk.bold.hex('#DA70D6')('🛡️  DATABASE ADMIN OPERATION'),
+      '',
+      chalk.white(queryDisplay),
+      '',
+      chalk.hex('#DA70D6')(`Action: ${safety.explanation || 'Administrative database operation.'}`),
+    ];
+
+    if (safety.warnings.length > 0) {
+      lines.push('');
+      for (const w of safety.warnings) {
+        lines.push(chalk.yellow(`• ${w}`));
+      }
+    }
+
+    console.log(
+      boxen(lines.join('\n'), {
+        padding: 1,
+        borderColor: 'magenta',
+        borderStyle: 'round',
+        margin: { top: 1, bottom: 1 },
+      })
+    );
+
+    if (safety.requiresLiteralWord && safety.literalWord) {
+      const typed = await promptInput(
+        chalk.hex('#DA70D6').bold(
+          `Administrative operation. Type "${safety.literalWord}" to confirm: `
+        ),
+        ask
+      );
+
+      if (typed.trim() === safety.literalWord) {
+        return { confirmed: true };
+      }
+      return {
+        confirmed: false,
+        reason: `Confirmation word mismatch (expected "${safety.literalWord}"). Operation cancelled.`,
+      };
+    }
+
+    const answer = await promptConfirm(
+      chalk.hex('#DA70D6').bold('Execute database admin operation?'),
+      false,
+      ask
+    );
+
+    return { confirmed: answer };
+  }
+
   // 3. STRUCTURAL OPERATION (DDL: CREATE TABLE, CREATE INDEX, ALTER ADD, createCollection)
   if (safety.isStructural) {
     const lines = [

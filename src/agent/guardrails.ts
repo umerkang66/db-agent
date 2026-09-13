@@ -23,12 +23,15 @@ const OBVIOUS_OUT_OF_SCOPE_PATTERNS = [
 ];
 
 const OBVIOUS_DATABASE_PATTERNS = [
-  /^(?:SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|EXPLAIN|SHOW|DESCRIBE|WITH)\b/i,
+  /^(?:SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|EXPLAIN|SHOW|DESCRIBE|WITH|GRANT|REVOKE|VACUUM|REINDEX|CHECKPOINT|DISCARD|RESET|LOCK)\b/i,
   /\b(?:table|tables|collection|collections|schema|column|columns|index|indexes|foreign key|primary key)\b/i,
   /\b(?:find|aggregate|count|where|group by|order by|having|limit|join|left join|inner join)\b/i,
   /\b(?:how many (?:users|rows|records|orders|items|products|documents))\b/i,
   /\b(?:database|postgres|mongodb|mongo|pg_)\b/i,
   /\b(?:query|queries|sql|result|results|rows?|records?)\b/i,
+  /\b(?:role|roles|permission|permissions|privilege|privileges|admin|administration|vacuum|reindex|checkpoint|terminate|kill\s+query|backend)\b/i,
+  /\b(?:fake|mock|seed|populate|sample|test)\s+(?:users?|orders?|products?|customers?|data|rows?|records?|documents?|tables?|collections?|spendings?|purchases?)\b/i,
+  /\b(?:add|insert|create|populate|seed|generate)\b.*?\b(?:users?|orders?|products?|customers?|data|rows?|records?|documents?|tables?|collections?|spendings?|purchases?)\b/i,
 ];
 
 /**
@@ -157,7 +160,8 @@ export async function classifyIntent(
 /**
  * Checks whether an operation is blocked by --strict mode.
  * Default strictMode: true.
- * If strictMode is ON and allowFullWipe is false, any full_wipe operation is hard blocked.
+ * If strictMode is ON and allowFullWipe is false, any full_wipe or admin operation is hard blocked.
+ * With --allow-full-wipe, full wipes and db admin tasks are permitted.
  */
 export function checkStrictWipe(
   classification: SafetyClassification,
@@ -166,12 +170,21 @@ export function checkStrictWipe(
   const strictMode = options.strictMode !== false; // default true
   const allowFullWipe = options.allowFullWipe === true;
 
-  if (classification.isFullWipe && strictMode && !allowFullWipe) {
-    return {
-      blocked: true,
-      message:
-        'Operation blocked by --strict mode: full database or all-table drop is prohibited. To allow this, start sandal-db with --allow-full-wipe.',
-    };
+  if (strictMode && !allowFullWipe) {
+    if (classification.isFullWipe) {
+      return {
+        blocked: true,
+        message:
+          'Operation blocked by --strict mode: full database or all-table drop is prohibited. To allow this, start sandal-db with --allow-full-wipe.',
+      };
+    }
+    if (classification.category === 'admin' || classification.isAdmin) {
+      return {
+        blocked: true,
+        message:
+          'Operation blocked by --strict mode: database admin tasks are prohibited. To allow this, start sandal-db with --allow-full-wipe.',
+      };
+    }
   }
 
   return { blocked: false };
