@@ -1,5 +1,7 @@
 # SANDAL: Safe Agentic Natural-language Database Access Layer
 
+![SANDAL](image.png)
+
 SANDAL is an agentic command-line interface that enables software engineers, data analysts, and site reliability engineers to query, inspect, and manage databases using natural language. Powered by LangGraph and multi-provider language models, SANDAL translates natural language prompts into parameterized database queries, displays execution previews and impact estimations, and enforces multi-layered guardrails before executing any mutating statements.
 
 ---
