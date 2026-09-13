@@ -10,13 +10,17 @@ import {
   ForeignKeyInfo,
 } from './adapter.js';
 import { maskUrl } from '../config/index.js';
+import { isSupabaseDirectUrl, resolveSupabaseUrl } from './supabase.js';
 
 const { Pool } = pg;
 
 export class PostgresAdapter implements DatabaseAdapter {
   readonly type = 'postgres';
   private pool: pg.Pool | null = null;
-  public readonly connectionUrl: string;
+  public connectionUrl: string;
+  public isSupabaseAutoRouted = false;
+  public supabaseRegion?: string;
+  public originalUrl?: string;
   private cachedSchema: DatabaseSchema | null = null;
   public databaseName = 'postgres';
 
@@ -34,22 +38,65 @@ export class PostgresAdapter implements DatabaseAdapter {
     return maskUrl(this.connectionUrl);
   }
 
-  async connect(): Promise<void> {
+  async connect(onProgress?: (status: string) => void): Promise<void> {
     if (this.pool) return;
-    this.pool = new Pool({
-      connectionString: this.connectionUrl,
-      connectionTimeoutMillis: 10000,
-      idleTimeoutMillis: 30000,
-    });
-    // Test the connection
-    const client = await this.pool.connect();
     try {
-      const res = await client.query('SELECT current_database() as db_name;');
-      if (res.rows[0]?.db_name) {
-        this.databaseName = res.rows[0].db_name;
+      this.pool = new Pool({
+        connectionString: this.connectionUrl,
+        connectionTimeoutMillis: 10000,
+        idleTimeoutMillis: 30000,
+      });
+      // Test the connection
+      const client = await this.pool.connect();
+      try {
+        const res = await client.query('SELECT current_database() as db_name;');
+        if (res.rows[0]?.db_name) {
+          this.databaseName = res.rows[0].db_name;
+        }
+      } finally {
+        client.release();
       }
-    } finally {
-      client.release();
+    } catch (err: any) {
+      if (this.pool) {
+        await this.pool.end().catch(() => {});
+        this.pool = null;
+      }
+
+      // If direct Supabase connection failed (e.g. IPv6 ENOTFOUND or ENETUNREACH), attempt auto-routing
+      if (isSupabaseDirectUrl(this.connectionUrl)) {
+        onProgress?.('Direct Supabase connection failed (IPv6-only). Auto-detecting IPv4 pooler region...');
+        const autoResolved = await resolveSupabaseUrl(this.connectionUrl, onProgress);
+        if (autoResolved) {
+          this.originalUrl = this.connectionUrl;
+          this.connectionUrl = autoResolved.poolerUrl;
+          this.isSupabaseAutoRouted = true;
+          this.supabaseRegion = autoResolved.region;
+
+          onProgress?.(`Found region [${autoResolved.region}]. Connecting via IPv4 pooler...`);
+
+          this.pool = new Pool({
+            connectionString: this.connectionUrl,
+            connectionTimeoutMillis: 10000,
+            idleTimeoutMillis: 30000,
+          });
+          const client = await this.pool.connect();
+          try {
+            const res = await client.query('SELECT current_database() as db_name;');
+            if (res.rows[0]?.db_name) {
+              this.databaseName = res.rows[0].db_name;
+            }
+          } finally {
+            client.release();
+          }
+          return;
+        } else {
+          throw new Error(
+            `Direct Supabase connection failed (${err.message}) because direct connections are IPv6-only, and auto-detecting the Supabase IPv4 pooler failed. Please check your project ref/password or copy your Connection Pooler URL directly from Supabase Dashboard.`
+          );
+        }
+      }
+
+      throw err;
     }
   }
 

@@ -105,7 +105,7 @@ export interface DatabaseAdapter {
   readonly type: DatabaseType;
   readonly databaseName: string;
   readonly connectionUrl: string;
-  connect(): Promise<void>;
+  connect(onProgress?: (status: string) => void): Promise<void>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
   inspectSchema(forceRefresh?: boolean): Promise<DatabaseSchema>;

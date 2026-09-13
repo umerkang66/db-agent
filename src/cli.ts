@@ -22,6 +22,7 @@ import {
 } from './config/index.js';
 import { LLMProvider } from './config/types.js';
 import { createDatabaseAdapter, detectDatabaseType } from './db/connection.js';
+import { PostgresAdapter } from './db/postgres.js';
 import { createChatModel } from './agent/llm.js';
 import { ReplSession } from './repl.js';
 import { renderMarkdown } from './markdown.js';
@@ -498,13 +499,30 @@ async function runCli(opts: {
   ).start();
   const adapter = createDatabaseAdapter(dbUrl);
   try {
-    await adapter.connect();
-    dbSpinner.succeed(
-      chalk.green(
-        `Connected to ${adapter.type.toUpperCase()} database: ${adapter.databaseName}`,
-      ),
-    );
-    addSavedConnection(dbUrl);
+    await adapter.connect((status) => {
+      dbSpinner.text = status;
+    });
+    if (adapter instanceof PostgresAdapter && adapter.isSupabaseAutoRouted) {
+      dbSpinner.succeed(
+        chalk.green(
+          `Connected to Supabase PostgreSQL database via IPv4 pooler [${adapter.supabaseRegion}]: ${adapter.databaseName}`,
+        ),
+      );
+      console.log(
+        chalk.gray(
+          `  Auto-resolved direct Supabase URL to connection pooler: ${adapter.getMaskedUrl()}`,
+        ),
+      );
+      // Persist the working pooler URL to config
+      writeConfig({ dbUrl: adapter.connectionUrl });
+    } else {
+      dbSpinner.succeed(
+        chalk.green(
+          `Connected to ${adapter.type.toUpperCase()} database: ${adapter.databaseName}`,
+        ),
+      );
+    }
+    addSavedConnection(adapter.connectionUrl);
   } catch (err: any) {
     dbSpinner.fail(chalk.red(`Failed to connect to database: ${err.message}`));
     process.exit(1);

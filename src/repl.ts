@@ -6,6 +6,7 @@ import ora from 'ora';
 import Table from 'cli-table3';
 import { DatabaseAdapter } from './db/adapter.js';
 import { createDatabaseAdapter, detectDatabaseType } from './db/connection.js';
+import { PostgresAdapter } from './db/postgres.js';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { createDatabaseAgent } from './agent/graph.js';
 import { createChatModel } from './agent/llm.js';
@@ -414,7 +415,9 @@ export class ReplSession {
     const spinner = ora(`Connecting to ${maskUrl(urlToConnect)}...`).start();
     try {
       const newAdapter = createDatabaseAdapter(urlToConnect);
-      await newAdapter.connect();
+      await newAdapter.connect((status) => {
+        spinner.text = status;
+      });
       await newAdapter.inspectSchema(true);
 
       // Disconnect previous adapter cleanly
@@ -428,12 +431,20 @@ export class ReplSession {
       // Re-create agent for the new adapter while maintaining state & chat memory
       this.initAgent();
 
-      addSavedConnection(urlToConnect);
-      spinner.succeed(
-        chalk.green(
-          `Switched to ${newAdapter.type.toUpperCase()} database: ${newAdapter.databaseName} (${newAdapter.getMaskedUrl()})`
-        )
-      );
+      addSavedConnection(newAdapter.connectionUrl);
+      if (newAdapter instanceof PostgresAdapter && newAdapter.isSupabaseAutoRouted) {
+        spinner.succeed(
+          chalk.green(
+            `Switched to Supabase PostgreSQL database via IPv4 pooler [${newAdapter.supabaseRegion}]: ${newAdapter.databaseName} (${newAdapter.getMaskedUrl()})`
+          )
+        );
+      } else {
+        spinner.succeed(
+          chalk.green(
+            `Switched to ${newAdapter.type.toUpperCase()} database: ${newAdapter.databaseName} (${newAdapter.getMaskedUrl()})`
+          )
+        );
+      }
       console.log(
         chalk.gray(
           `Chat session [${this.sessionId}] continuing with conversation memory on the new database.\n`

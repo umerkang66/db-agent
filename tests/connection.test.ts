@@ -31,6 +31,13 @@ describe('Database Connection Detection', () => {
     expect(adapter.getMaskedUrl()).toContain('***');
   });
 
+  it('creates PostgresAdapter for Supabase URLs with auto-routing capability', () => {
+    const adapter = createDatabaseAdapter('postgresql://postgres:pass@db.bgcfmmlrhmvoojuydhdj.supabase.co:5432/postgres') as PostgresAdapter;
+    expect(adapter).toBeInstanceOf(PostgresAdapter);
+    expect(adapter.type).toBe('postgres');
+    expect(adapter.isSupabaseAutoRouted).toBe(false);
+  });
+
   it('creates MongoAdapter for mongo URLs', () => {
     const adapter = createDatabaseAdapter('mongodb://admin:secretpass@cluster.net/analytics');
     expect(adapter).toBeInstanceOf(MongoAdapter);

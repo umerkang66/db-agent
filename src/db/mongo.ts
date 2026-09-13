@@ -35,7 +35,7 @@ export class MongoAdapter implements DatabaseAdapter {
     return maskUrl(this.connectionUrl);
   }
 
-  async connect(): Promise<void> {
+  async connect(_onProgress?: (status: string) => void): Promise<void> {
     if (this.client) return;
     this.client = new MongoClient(this.connectionUrl, {
       serverSelectionTimeoutMS: 10000,
