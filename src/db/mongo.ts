@@ -145,14 +145,14 @@ export class MongoAdapter implements DatabaseAdapter {
       if (value === null) type = 'null';
       else if (Array.isArray(value)) type = 'array';
       else if (value instanceof Date) type = 'date';
-      else if (value && typeof value === 'object' && value._bsontype) type = value._bsontype;
+      else if (value && typeof value === 'object' && (value as any)._bsontype) type = (value as any)._bsontype;
 
       if (!fieldMap.has(fullKey)) {
         fieldMap.set(fullKey, new Set());
       }
       fieldMap.get(fullKey)!.add(type);
 
-      if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date) && !value._bsontype) {
+      if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date) && !(value as any)._bsontype) {
         this.extractFields(value, fullKey, fieldMap);
       }
     }
