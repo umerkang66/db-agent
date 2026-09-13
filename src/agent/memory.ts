@@ -9,6 +9,7 @@ export interface ChatMessage {
   content: string;
   query?: string;
   rowCount?: number;
+  resultSample?: any[];
   timestamp: number;
 }
 
@@ -202,6 +203,9 @@ export class ChatMemoryManager {
         if (m.query) {
           text = `[Executed Query: ${m.query}]\n${text}`;
         }
+        if (m.resultSample && m.resultSample.length > 0) {
+          text += `\n[Previous Query Results Sample: ${JSON.stringify(m.resultSample.slice(0, 10))}]`;
+        }
         result.push(new AIMessage(text));
       }
     }
@@ -223,7 +227,8 @@ export class ChatMemoryManager {
       .map((m) => {
         const prefix = m.role === 'user' ? 'User:' : 'Assistant:';
         const q = m.query ? ` (Query: ${m.query})` : '';
-        return `${prefix} ${m.content}${q}`;
+        const rc = typeof m.rowCount === 'number' ? ` (${m.rowCount} rows)` : '';
+        return `${prefix} ${m.content}${q}${rc}`;
       })
       .join('\n');
   }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { classifyQuery } from '../src/safety/classifier.js';
-import { checkStrictWipe, classifyIntent, REFUSAL_MESSAGE } from '../src/agent/guardrails.js';
+import { checkStrictWipe, classifyIntent, isExplicitNoQuery, REFUSAL_MESSAGE } from '../src/agent/guardrails.js';
 
 describe('Safety Classifier - PostgreSQL', () => {
   it('classifies SELECT queries as read-only', () => {
@@ -225,5 +225,37 @@ describe('Guardrails and Strict Wipe Enforcement', () => {
 
     const outOfScope3 = await classifyIntent('write me a poem about databases');
     expect(outOfScope3.isDatabaseTask).toBe(false);
+  });
+
+  it('correctly detects explicit no-query instructions', () => {
+    expect(isExplicitNoQuery("don't run the query, just do something with the previous results")).toBe(true);
+    expect(isExplicitNoQuery("do not run any query, just summarize")).toBe(true);
+    expect(isExplicitNoQuery("without running a query, what was the highest salary?")).toBe(true);
+    expect(isExplicitNoQuery("don't execute any query")).toBe(true);
+    expect(isExplicitNoQuery("no queries please, just explain")).toBe(true);
+    expect(isExplicitNoQuery("just use the previous results to format a table")).toBe(true);
+    expect(isExplicitNoQuery("just do something with the previous results")).toBe(true);
+    expect(isExplicitNoQuery("don't run it, just tell me what it means")).toBe(true);
+    expect(isExplicitNoQuery("skip the query and show markdown")).toBe(true);
+    expect(isExplicitNoQuery("don't query the database")).toBe(true);
+    expect(isExplicitNoQuery("without executing queries")).toBe(true);
+
+    // Negative cases: requests that require queries
+    expect(isExplicitNoQuery("SELECT * FROM users;")).toBe(false);
+    expect(isExplicitNoQuery("show all users")).toBe(false);
+    expect(isExplicitNoQuery("how many orders were placed today?")).toBe(false);
+    expect(isExplicitNoQuery("delete from users where id = 1")).toBe(false);
+    expect(isExplicitNoQuery("find users with status active")).toBe(false);
+  });
+
+  it('classifies explicit no-query requests as valid database session tasks in intent guardrail', async () => {
+    const res1 = await classifyIntent("don't run the query, just do something with the previous results");
+    expect(res1.isDatabaseTask).toBe(true);
+
+    const res2 = await classifyIntent("without running a query, summarize the results above");
+    expect(res2.isDatabaseTask).toBe(true);
+
+    const res3 = await classifyIntent("just use the previous results");
+    expect(res3.isDatabaseTask).toBe(true);
   });
 });

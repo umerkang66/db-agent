@@ -278,7 +278,7 @@ export class ReplSession {
       }
 
       // 2. RUN AGENT GRAPH WITH CONVERSATION MEMORY
-      const agentSpinner = ora(chalk.cyan('Agent planning query...')).start();
+      const agentSpinner = ora(chalk.cyan('Agent thinking...')).start();
       this.currentSpinner = agentSpinner;
 
       try {
@@ -300,7 +300,7 @@ export class ReplSession {
         }
 
         // If query was executed and returned rows, render table
-        if (result.queryResult && result.queryResult.success && result.queryResult.rows) {
+        if (result.queryExecuted && result.queryResult && result.queryResult.success && result.queryResult.rows) {
           this.renderRowsTable(result.queryResult);
         }
 
@@ -322,14 +322,17 @@ export class ReplSession {
         );
 
         if (result.conclusion) {
-          const queryStr = result.generatedQuery?.sql || result.generatedQuery?.rawDisplay;
+          const queryStr = result.queryExecuted
+            ? (result.generatedQuery?.sql || result.generatedQuery?.rawDisplay)
+            : undefined;
           this.memoryManager.addMessage(
             this.sessionId,
             {
               role: 'assistant',
               content: result.conclusion,
               query: queryStr,
-              rowCount: result.queryResult?.rowCount,
+              rowCount: result.queryExecuted ? result.queryResult?.rowCount : undefined,
+              resultSample: result.queryExecuted ? result.queryResult?.rows?.slice(0, 15) : undefined,
             },
             this.adapter.connectionUrl
           );

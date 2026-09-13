@@ -28,7 +28,46 @@ const OBVIOUS_DATABASE_PATTERNS = [
   /\b(?:find|aggregate|count|where|group by|order by|having|limit|join|left join|inner join)\b/i,
   /\b(?:how many (?:users|rows|records|orders|items|products|documents))\b/i,
   /\b(?:database|postgres|mongodb|mongo|pg_)\b/i,
+  /\b(?:query|queries|sql|result|results|rows?|records?)\b/i,
 ];
+
+/**
+ * Detects if the user explicitly commanded NOT to run/execute any query,
+ * or to just use/format/inspect existing/previous results.
+ */
+export function isExplicitNoQuery(input: string): boolean {
+  const trimmed = input.trim();
+  const patterns = [
+    // don't / do not / shouldn't / stop / avoid running / executing / calling / issuing query / queries / sql / command
+    /\b(?:don'?t|do\s+not|never|shouldn'?t|stop|avoid)\s+(?:run|running|execute|executing|call|calling|issue|issuing|send|sending|make|making)\s+(?:any\s+|the\s+|a\s+|new\s+)?(?:query|queries|sql|command|db\s+query|database\s+query)\b/i,
+
+    // without / no running / executing / making queries
+    /\b(?:without|no)\s+(?:running|executing|making|issuing|calling)\s+(?:any\s+|the\s+|a\s+|new\s+)?(?:query|queries|sql|command)\b/i,
+
+    // no query / no queries / skip the query / skip execution
+    /\b(?:no\s+query|no\s+queries|skip\s+(?:the\s+)?query|skip\s+execution)\b/i,
+
+    // don't query / do not query (the database)
+    /\b(?:don'?t|do\s+not|never)\s+query(?:\s+(?:the\s+database|the\s+db|again))?\b/i,
+
+    // don't / do not run / execute it
+    /\b(?:don'?t|do\s+not|never)\s+(?:run|execute)\s+it\b/i,
+
+    // don't execute anything / don't run anything
+    /\b(?:don'?t|do\s+not|never)\s+(?:run|execute)\s+anything\b/i,
+
+    // just use / take / look at / do something with the previous / last / prior results / output / rows
+    /\bjust\s+(?:use|take|from|look\s+at|work\s+with|do\s+something\s+with)\s+(?:the\s+)?(?:previous|last|prior|above|earlier)\s+(?:results?|data|output|rows?)\b/i,
+
+    // from / using / with the previous results ... don't run / do not run / without querying
+    /\b(?:from|using|with)\s+(?:the\s+)?(?:previous|last|prior|above|earlier)\s+(?:results?|data|output|rows?)[^,\n.]*?(?:don'?t|do\s+not|without)\s+(?:run|running|query|querying)\b/i,
+
+    // don't run ... previous results
+    /\b(?:don'?t|do\s+not|without)\s+(?:run|running|execute|executing)[^,\n.]*?(?:previous|last|prior|above|earlier)\s+(?:results?|data|output|rows?)\b/i,
+  ];
+
+  return patterns.some((pattern) => pattern.test(trimmed));
+}
 
 /**
  * Classifies user intent BEFORE it reaches the LangGraph agent pipeline.
@@ -51,6 +90,11 @@ export async function classifyIntent(
     }
   }
 
+  // Explicit no-query instructions concerning previous results/session are database tasks
+  if (isExplicitNoQuery(trimmed)) {
+    return { isDatabaseTask: true };
+  }
+
   // 2. Fast regex checks for obvious database queries
   for (const pattern of OBVIOUS_DATABASE_PATTERNS) {
     if (pattern.test(trimmed)) {
@@ -66,7 +110,12 @@ export async function classifyIntent(
   }
 
   // If there is prior conversation context, common conversational follow-ups are database tasks
-  if (historyContext && /^(?:now\s+|and\s+|also\s+|then\s+)?(?:count|sort|filter|show|order|group|limit|delete|update|find|export|why|how many|what about|which ones?|where)\b/i.test(trimmed)) {
+  if (
+    historyContext &&
+    /^(?:now\s+|and\s+|also\s+|then\s+)?(?:count|sort|filter|show|order|group|limit|delete|update|find|export|why|how many|what about|which ones?|where|don'?t|do not|format|summarize|explain)\b/i.test(
+      trimmed
+    )
+  ) {
     return { isDatabaseTask: true };
   }
 

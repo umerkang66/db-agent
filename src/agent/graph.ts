@@ -4,7 +4,7 @@ import { HumanMessage, SystemMessage, AIMessage, BaseMessage } from '@langchain/
 import { DatabaseAdapter, DatabaseSchema, ExecutableQuery, QueryResult } from '../db/adapter.js';
 import { classifyQuery, SafetyClassification, ClassifierOptions } from '../safety/classifier.js';
 import { requestUserConfirmation, ConfirmationResult } from '../safety/confirm.js';
-import { checkStrictWipe } from './guardrails.js';
+import { checkStrictWipe, isExplicitNoQuery } from './guardrails.js';
 import { getSystemPrompt, formatSchemaForPrompt } from './prompts.js';
 
 export interface GraphConfig {
@@ -35,8 +35,20 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_, update) => update ?? [],
     default: () => [],
   }),
+  requiresQuery: Annotation<boolean>({
+    reducer: (_, update) => update ?? true,
+    default: () => true,
+  }),
+  queryExecuted: Annotation<boolean>({
+    reducer: (_, update) => update ?? false,
+    default: () => false,
+  }),
   generatedQuery: Annotation<ExecutableQuery | undefined>({
     reducer: (_, update) => update,
+    default: () => undefined,
+  }),
+  lastGeneratedQuery: Annotation<ExecutableQuery | undefined>({
+    reducer: (curr, update) => update ?? curr,
     default: () => undefined,
   }),
   safety: Annotation<SafetyClassification | undefined>({
@@ -59,12 +71,20 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_, update) => update,
     default: () => undefined,
   }),
+  lastQueryResult: Annotation<QueryResult | undefined>({
+    reducer: (curr, update) => update ?? curr,
+    default: () => undefined,
+  }),
   analysis: Annotation<string | undefined>({
     reducer: (_, update) => update,
     default: () => undefined,
   }),
   stats: Annotation<any>({
     reducer: (_, update) => update,
+    default: () => undefined,
+  }),
+  lastStats: Annotation<any>({
+    reducer: (curr, update) => update ?? curr,
     default: () => undefined,
   }),
   conclusion: Annotation<string | undefined>({
@@ -76,7 +96,7 @@ export const AgentStateAnnotation = Annotation.Root({
     default: () => false,
   }),
   messages: Annotation<BaseMessage[]>({
-    reducer: (curr, update) => curr.concat(update ?? []),
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => [],
   }),
 });
@@ -103,7 +123,127 @@ export function createDatabaseAgent(config: GraphConfig) {
     };
   }
 
-  // Node 2: identify_targets
+  // Node 2: determine_action
+  async function determineActionNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
+    const userInput = state.userInput.trim();
+
+    // Reset current turn query state
+    const baseReset = {
+      queryExecuted: false,
+      generatedQuery: undefined,
+      queryResult: undefined,
+      safety: undefined,
+      confirmed: false,
+      cancelReason: undefined,
+      conclusion: undefined,
+    };
+
+    // 1. Explicit no-query instruction
+    if (isExplicitNoQuery(userInput)) {
+      return {
+        ...baseReset,
+        requiresQuery: false,
+      };
+    }
+
+    // 2. Obvious live database queries (SQL / Mongo or direct table retrieval)
+    const isObviousLiveQuery =
+      /^(?:SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE)\b/i.test(userInput) ||
+      /^(?:find|search|fetch|get|select|show|display|list|count|delete|update|insert|remove)\s+(?:all\s+|the\s+|every\s+|top\s+\d+\s+)?(?:users?|orders?|products?|customers?|items?|rows?|records?|documents?|accounts?|entries)\b/i.test(userInput) ||
+      /\bhow\s+many\s+(?:users|orders|products|items|rows|records|documents|customers|accounts)\b/i.test(userInput);
+
+    if (isObviousLiveQuery) {
+      return {
+        ...baseReset,
+        requiresQuery: true,
+      };
+    }
+
+    // 3. Transformation / analysis on previous results
+    const hasPreviousResults = Boolean(
+      state.lastQueryResult &&
+      state.lastQueryResult.rows &&
+      state.lastQueryResult.rows.length > 0
+    );
+
+    const isOperatingOnPreviousResults =
+      hasPreviousResults &&
+      /\b(?:previous|last|prior|above|earlier)\s+(?:results?|data|output|rows?)\b/i.test(userInput) &&
+      /\b(?:format|display|convert|export|show|summarize|explain|calculate|count|average|find|filter|sort|list)\b/i.test(userInput);
+
+    if (isOperatingOnPreviousResults) {
+      return {
+        ...baseReset,
+        requiresQuery: false,
+      };
+    }
+
+    // 4. Schema or meta question (when schema is already available)
+    const isSchemaOrMetaQuestion =
+      /\b(?:schema|database\s+structure)\b/i.test(userInput) ||
+      /\b(?:explain|describe|what|tell\s+me\s+about)\b.*?\b(?:tables?|collections?|columns?|indexes?|foreign\s+keys?|schema)\b/i.test(userInput) ||
+      /\b(?:what\s+(?:tables|collections|columns)\s+(?:exist|are\s+there|do\s+we\s+have))\b/i.test(userInput) ||
+      /\b(?:what\s+was\s+the\s+(?:last|previous)\s+query|why\s+did\s+(?:the\s+last\s+query|it)\s+fail)\b/i.test(userInput);
+
+    if (isSchemaOrMetaQuestion && (state.schemaSummary || state.messages.length > 0)) {
+      return {
+        ...baseReset,
+        requiresQuery: false,
+      };
+    }
+
+    // 5. LLM Router fallback for semantic decision
+    const historyMessages: BaseMessage[] = state.messages.slice(-4);
+    const prevQueryStr = state.lastGeneratedQuery?.sql || state.lastGeneratedQuery?.rawDisplay || 'None';
+    const prevRowsCount = state.lastQueryResult?.rowCount ?? state.lastQueryResult?.rows?.length ?? 0;
+
+    const routerPrompt = `Determine whether fulfilling this user request requires generating and executing a LIVE database query (SQL or MongoDB) against the database, or if it should be answered directly without executing any query.
+
+User Request: "${userInput}"
+
+Recent Context:
+- Previous Query: ${prevQueryStr}
+- Previous Rows Returned: ${prevRowsCount}
+- Schema Summary Available: ${state.schemaSummary ? 'Yes' : 'No'}
+
+Rules:
+1. If the user explicitly asks NOT to run a query (e.g., "don't run query", "without querying", "do not execute queries"), requiresQuery MUST be false.
+2. If the user asks to format, summarize, filter, inspect, or calculate based on the previous results or conversation context, requiresQuery MUST be false.
+3. If the user asks about the schema structure, columns, or general knowledge answerable from context, requiresQuery MUST be false.
+4. If the user asks to retrieve fresh records from a table/collection, count rows in the database, modify, insert, delete, or create database objects, requiresQuery MUST be true.
+
+Respond with JSON only:
+{"requiresQuery": boolean, "reason": "<short explanation>"}`;
+
+    try {
+      const response = await model.invoke([
+        ...historyMessages,
+        new HumanMessage(routerPrompt),
+      ]);
+      const content = typeof response.content === 'string' ? response.content.trim() : '';
+      const jsonMatch = content.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (typeof parsed.requiresQuery === 'boolean') {
+          return {
+            ...baseReset,
+            requiresQuery: parsed.requiresQuery,
+          };
+        }
+      }
+      return {
+        ...baseReset,
+        requiresQuery: true,
+      };
+    } catch {
+      return {
+        ...baseReset,
+        requiresQuery: true,
+      };
+    }
+  }
+
+  // Node 3: identify_targets
   async function identifyTargetsNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
     const historyMessages: BaseMessage[] = state.messages.slice(-4);
     const prompt = `Based on this user request: "${state.userInput}"
@@ -317,7 +457,8 @@ Do not wrap with markdown or code fences.`;
       const conclusion = state.cancelReason || 'Operation was not executed.';
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(conclusion)],
+        queryExecuted: false,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(conclusion)],
       };
     }
 
@@ -326,7 +467,8 @@ Do not wrap with markdown or code fences.`;
       const conclusion = 'No query was executed.';
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(conclusion)],
+        queryExecuted: false,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(conclusion)],
       };
     }
 
@@ -334,7 +476,10 @@ Do not wrap with markdown or code fences.`;
       const conclusion = `Query failed with error: ${res.error} (took ${res.durationMs}ms)`;
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(conclusion)],
+        queryExecuted: true,
+        lastQueryResult: res,
+        lastGeneratedQuery: state.generatedQuery,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(conclusion)],
       };
     }
 
@@ -360,7 +505,11 @@ Ground your response strictly in the query results above. Never hallucinate rows
       const historyAiText = queryStr ? `[Executed Query: ${queryStr}]\n${conclusion}` : conclusion;
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(historyAiText)],
+        queryExecuted: true,
+        lastQueryResult: res,
+        lastGeneratedQuery: state.generatedQuery,
+        lastStats: state.stats,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(historyAiText)],
       };
     } catch (err: any) {
       const conclusion = `Query executed successfully (${res.rowCount ?? 0} rows, ${res.durationMs}ms).`;
@@ -368,7 +517,70 @@ Ground your response strictly in the query results above. Never hallucinate rows
       const historyAiText = queryStr ? `[Executed Query: ${queryStr}]\n${conclusion}` : conclusion;
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(historyAiText)],
+        queryExecuted: true,
+        lastQueryResult: res,
+        lastGeneratedQuery: state.generatedQuery,
+        lastStats: state.stats,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(historyAiText)],
+      };
+    }
+  }
+
+  // Node 9: answer_direct (when requiresQuery is false)
+  async function answerDirectNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
+    const historyMessages: BaseMessage[] = state.messages.slice(-6);
+
+    let contextDetails = '';
+    if (state.lastQueryResult && state.lastQueryResult.rows && state.lastQueryResult.rows.length > 0) {
+      const queryStr = state.lastGeneratedQuery?.sql || state.lastGeneratedQuery?.rawDisplay || 'N/A';
+      contextDetails += `\n═══════════════════════════════════════════════════════════════\n`;
+      contextDetails += `PREVIOUS QUERY EXECUTION DETAILS:\n`;
+      contextDetails += `- Executed Query: ${queryStr}\n`;
+      contextDetails += `- Rows returned: ${state.lastQueryResult.rowCount ?? state.lastQueryResult.rows.length}\n`;
+      contextDetails += `- Rows data (sample up to 25 rows):\n${JSON.stringify(state.lastQueryResult.rows.slice(0, 25), null, 2)}\n`;
+      if (state.lastStats) {
+        contextDetails += `- Computed statistics: ${JSON.stringify(state.lastStats, null, 2)}\n`;
+      }
+      contextDetails += `═══════════════════════════════════════════════════════════════\n`;
+    }
+
+    const prompt = `You are "SANDAL", an expert database assistant.
+The user has provided a request that MUST be answered directly WITHOUT generating or executing any database query.
+
+User Request: "${state.userInput}"
+
+Database Schema:
+${state.schemaSummary || 'No schema loaded.'}
+${contextDetails}
+
+Guidelines:
+1. Provide a direct, helpful, and accurate natural-language response to the user's request.
+2. If the user asked to do something with previous results (e.g. summarize, format, count, calculate, extract, sort), perform that operation using the PREVIOUS QUERY EXECUTION DETAILS above.
+3. If the user asked to use previous results but NO previous results exist in the session, politely explain that no previous query results are available in this session.
+4. DO NOT output, execute, or propose any new database queries.
+5. Ground your answer strictly in the available schema, history, or previous query results. Never hallucinate data.`;
+
+    try {
+      const response = await model.invoke([
+        ...historyMessages,
+        new HumanMessage(prompt),
+      ]);
+      const conclusion = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      return {
+        conclusion,
+        queryExecuted: false,
+        generatedQuery: undefined,
+        queryResult: undefined,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(conclusion)],
+      };
+    } catch (err: any) {
+      const conclusion = `Unable to process request: ${err.message}`;
+      return {
+        conclusion,
+        queryExecuted: false,
+        generatedQuery: undefined,
+        queryResult: undefined,
+        messages: [...state.messages, new HumanMessage(state.userInput), new AIMessage(conclusion)],
       };
     }
   }
@@ -376,6 +588,7 @@ Ground your response strictly in the query results above. Never hallucinate rows
   // Build the StateGraph
   const workflow = new StateGraph(AgentStateAnnotation)
     .addNode('inspect_schema', inspectSchemaNode)
+    .addNode('determine_action', determineActionNode)
     .addNode('identify_targets', identifyTargetsNode)
     .addNode('generate_query', generateQueryNode)
     .addNode('classify_safety', classifySafetyNode)
@@ -383,9 +596,16 @@ Ground your response strictly in the query results above. Never hallucinate rows
     .addNode('execute_query', executeQueryNode)
     .addNode('analyze_results', analyzeResultsNode)
     .addNode('produce_conclusion', produceConclusionNode)
+    .addNode('answer_direct', answerDirectNode)
     // Edges
     .addEdge(START, 'inspect_schema')
-    .addEdge('inspect_schema', 'identify_targets')
+    .addEdge('inspect_schema', 'determine_action')
+    .addConditionalEdges('determine_action', (state: AgentStateType) => {
+      if (state.requiresQuery) {
+        return 'identify_targets';
+      }
+      return 'answer_direct';
+    })
     .addEdge('identify_targets', 'generate_query')
     .addEdge('generate_query', 'classify_safety')
     .addEdge('classify_safety', 'request_confirmation')
@@ -397,7 +617,8 @@ Ground your response strictly in the query results above. Never hallucinate rows
     })
     .addEdge('execute_query', 'analyze_results')
     .addEdge('analyze_results', 'produce_conclusion')
-    .addEdge('produce_conclusion', END);
+    .addEdge('produce_conclusion', END)
+    .addEdge('answer_direct', END);
 
   const checkpointer = new MemorySaver();
   const app = workflow.compile({ checkpointer });
