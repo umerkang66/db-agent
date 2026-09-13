@@ -21,8 +21,8 @@ import { ReplSession } from './repl.js';
 const program = new Command();
 
 program
-  .name('db-agent')
-  .description('Production-grade agentic database assistant using LangGraph & LLMs (Gemini, OpenAI, Anthropic)')
+  .name('sandal-db')
+  .description('SANDAL - Safe Agentic Natural-language Database Access Layer')
   .version('1.0.0')
   .argument('[dbUrl]', 'Database connection URL (PostgreSQL or MongoDB)')
   .option('-p, --provider <provider>', 'LLM provider: google | openai | anthropic')
@@ -52,7 +52,7 @@ program
 // Config Subcommand
 const configCmd = program
   .command('config')
-  .description('Manage stored database credentials and API keys in ~/.db-agent/config.json')
+  .description('Manage stored database credentials and API keys in ~/.sandal/config.json')
   .option('--set-db <url>', 'Set default database connection URL')
   .option('--set-key <key>', 'Set API key for the default provider')
   .option('--set-gemini <key>', 'Set Google Gemini API key')
@@ -70,7 +70,7 @@ const configCmd = program
 
     if (opts.show) {
       const cfg = readConfig();
-      console.log(chalk.bold.cyan('\nSaved Configuration (~/.db-agent/config.json):'));
+      console.log(chalk.bold.cyan('\nSaved Configuration (~/.sandal/config.json):'));
       console.log(`  Database URL:     ${cfg.dbUrl ? chalk.green(maskUrl(cfg.dbUrl)) : chalk.gray('Not set')}`);
       console.log(`  Default Provider: ${cfg.defaultProvider ? chalk.blue(cfg.defaultProvider) : chalk.gray('Not set (defaults to google)')}`);
       console.log(`  Default Model:    ${cfg.defaultModel ? chalk.white(cfg.defaultModel) : chalk.gray('Default for provider')}`);
@@ -161,7 +161,7 @@ async function runCli(opts: {
     });
 
     const saveDb = await confirm({
-      message: 'Save this database URL to ~/.db-agent/config.json for future runs?',
+      message: 'Save this database URL to ~/.sandal/config.json for future runs?',
       default: true,
     });
     if (saveDb) {
@@ -196,7 +196,7 @@ async function runCli(opts: {
     });
 
     const saveKey = await confirm({
-      message: 'Save this API key to ~/.db-agent/config.json?',
+      message: 'Save this API key to ~/.sandal/config.json?',
       default: true,
     });
 

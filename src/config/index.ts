@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import dotenv from 'dotenv';
-import { DbAgentConfig, ResolvedCredentials, LLMProvider } from './types.js';
+import { SandalConfig, DbAgentConfig, ResolvedCredentials, LLMProvider } from './types.js';
 
 // Load .env from current directory if present
 dotenv.config();
 
-const CONFIG_DIR_NAME = '.db-agent';
+const CONFIG_DIR_NAME = '.sandal';
+const LEGACY_CONFIG_DIR_NAME = '.db-agent';
 const CONFIG_FILE_NAME = 'config.json';
 
 export function getConfigDirPath(): string {
@@ -18,27 +19,36 @@ export function getConfigFilePath(): string {
   return path.join(getConfigDirPath(), CONFIG_FILE_NAME);
 }
 
+export function getLegacyConfigFilePath(): string {
+  return path.join(os.homedir(), LEGACY_CONFIG_DIR_NAME, CONFIG_FILE_NAME);
+}
+
 /**
- * Reads the config file from ~/.db-agent/config.json.
+ * Reads the config file from ~/.sandal/config.json (falling back to ~/.db-agent/config.json).
  * Returns empty config if file doesn't exist or is invalid.
  */
-export function readConfig(): DbAgentConfig {
+export function readConfig(): SandalConfig {
   const filePath = getConfigFilePath();
   try {
-    if (!fs.existsSync(filePath)) {
-      return {};
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      return JSON.parse(content) as SandalConfig;
     }
-    const content = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(content) as DbAgentConfig;
+    const legacyPath = getLegacyConfigFilePath();
+    if (fs.existsSync(legacyPath)) {
+      const content = fs.readFileSync(legacyPath, 'utf-8');
+      return JSON.parse(content) as SandalConfig;
+    }
+    return {};
   } catch {
     return {};
   }
 }
 
 /**
- * Writes config to ~/.db-agent/config.json with chmod 600 permissions.
+ * Writes config to ~/.sandal/config.json with chmod 600 permissions.
  */
-export function writeConfig(newConfig: Partial<DbAgentConfig>): void {
+export function writeConfig(newConfig: Partial<SandalConfig>): void {
   const dirPath = getConfigDirPath();
   const filePath = getConfigFilePath();
 
@@ -47,7 +57,7 @@ export function writeConfig(newConfig: Partial<DbAgentConfig>): void {
   }
 
   const existing = readConfig();
-  const merged: DbAgentConfig = {
+  const merged: SandalConfig = {
     ...existing,
     ...newConfig,
   };

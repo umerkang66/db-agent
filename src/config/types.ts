@@ -1,6 +1,6 @@
 export type LLMProvider = 'google' | 'openai' | 'anthropic';
 
-export interface DbAgentConfig {
+export interface SandalConfig {
   dbUrl?: string;
   geminiApiKey?: string;
   openaiApiKey?: string;
@@ -8,6 +8,8 @@ export interface DbAgentConfig {
   defaultProvider?: LLMProvider;
   defaultModel?: string;
 }
+
+export type DbAgentConfig = SandalConfig;
 
 export interface ResolvedCredentials {
   dbUrl?: string;

@@ -111,7 +111,7 @@ export function checkStrictWipe(
     return {
       blocked: true,
       message:
-        'Operation blocked by --strict mode: full database or all-table drop is prohibited. To allow this, start db-agent with --allow-full-wipe.',
+        'Operation blocked by --strict mode: full database or all-table drop is prohibited. To allow this, start sandal-db with --allow-full-wipe.',
     };
   }
 

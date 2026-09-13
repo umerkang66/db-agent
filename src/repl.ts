@@ -64,7 +64,7 @@ export class ReplSession {
       terminal: true,
     });
 
-    const promptText = chalk.cyan(`db-agent [${this.adapter.type}]> `);
+    const promptText = chalk.cyan(`sandal [${this.adapter.type}]> `);
 
     const askQuestion = (query: string): Promise<string> => {
       return new Promise((resolve) => rl.question(query, resolve));
@@ -312,7 +312,7 @@ export class ReplSession {
 
   private printWelcomeBanner(): void {
     const banner = [
-      chalk.bold.cyan('🤖 db-agent — Production-Grade Agentic Database Assistant'),
+      chalk.bold.cyan('SANDAL: Safe Agentic Natural-language Database Access Layer'),
       chalk.gray('LangGraph + Multi-Provider AI (Gemini, OpenAI, Anthropic)'),
       '',
       `${chalk.bold('Database:')} ${chalk.green(this.adapter.type.toUpperCase())} (${this.adapter.getMaskedUrl()})`,
@@ -338,7 +338,7 @@ export class ReplSession {
     console.log(
       boxen(
         [
-          chalk.bold.cyan('db-agent REPL Commands:'),
+          chalk.bold.cyan('SANDAL REPL Commands:'),
           '',
           `${chalk.bold('.tables / .collections')}   List all tables or collections with row counts`,
           `${chalk.bold('.schema [name]')}           Show columns, types, and indexes for a table`,

@@ -4,7 +4,7 @@ export const REFUSAL_MESSAGE =
   "I'm scoped to database operations on your connected DB only (schema inspection, queries, CRUD, analysis). I can't help with that here.";
 
 export function getSystemPrompt(dbType: DatabaseType, schemaSummary: string): string {
-  return `You are "db-agent", an expert, production-grade agentic database assistant.
+  return `You are "SANDAL" (Safe Agentic Natural-language Database Access Layer), an expert, production-grade agentic database assistant.
 You are connected directly to a live ${dbType === 'postgres' ? 'PostgreSQL' : 'MongoDB'} database.
 
 ═══════════════════════════════════════════════════════════════
