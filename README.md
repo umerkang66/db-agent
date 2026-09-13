@@ -1,6 +1,6 @@
 # SANDAL: Safe Agentic Natural-language Database Access Layer
 
-![SANDAL](image.png)
+![SANDAL](https://raw.githubusercontent.com/umerkang66/sandal/refs/heads/main/image.png)
 
 SANDAL is an agentic command-line interface that enables software engineers, data analysts, and site reliability engineers to query, inspect, and manage databases using natural language. Powered by LangGraph and multi-provider language models, SANDAL translates natural language prompts into parameterized database queries, displays execution previews and impact estimations, and enforces multi-layered guardrails before executing any mutating statements.
 
@@ -138,7 +138,7 @@ npx sandal-db@latest md [options] [fileOrText]
 | `--no-strict`           | `flag`    | Disables strict safety mode.                                                       | `false`              |
 | `--allow-full-wipe`     | `flag`    | Explicitly permits database-level drops after interactive phrase confirmation.     | `false`              |
 | `--threshold <number>`  | `integer` | Row count threshold above which updates are classified as dangerous operations.    | `50`                 |
-| `--markdown`            | `boolean` | Formats and renders LLM responses as rich terminal markdown.                      | `true`               |
+| `--markdown`            | `boolean` | Formats and renders LLM responses as rich terminal markdown.                       | `true`               |
 | `--no-markdown`         | `flag`    | Disables terminal markdown rendering and outputs raw text.                         | `false`              |
 | `-V, --version`         | `flag`    | Output the version number.                                                         |                      |
 | `-h, --help`            | `flag`    | Display command help and exit.                                                     |                      |
@@ -169,10 +169,10 @@ Dot commands provide direct utility functions without issuing requests to the LL
 | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `.tables` or `.collections` | Lists all discovered database tables or MongoDB collections with current row counts.                  |
 | `.schema [name]`            | Displays column names, data types, nullability constraints, and primary keys for the specified table. |
-| `.connect` or `.switch`     | Shows saved database connections; select by number or enter a new URL (preserves chat memory).       |
+| `.connect` or `.switch`     | Shows saved database connections; select by number or enter a new URL (preserves chat memory).        |
 | `.model [name]`             | Displays current model or switches to a new model on the fly.                                         |
 | `.provider [name]`          | Switches active LLM provider (`google`, `openai`, or `anthropic`).                                    |
-| `.key [remove \| set]`      | Displays active API key, removes it from config, or updates it live.                                 |
+| `.key [remove \| set]`      | Displays active API key, removes it from config, or updates it live.                                  |
 | `.chats`                    | Lists all saved chat sessions with message counts and last active times.                              |
 | `.chat <id \| number>`      | Switches to a specific chat session and restores its conversation memory.                             |
 | `.new`                      | Starts a fresh chat session with clean memory.                                                        |
@@ -271,6 +271,7 @@ Select a connection [number, N, C]: 2
 When you switch databases, your **conversation history and chat memory are preserved**, allowing you to continue querying or comparing insights across databases.
 
 From the command line:
+
 ```bash
 # List all saved database connections
 npx sandal-db config --connections
@@ -290,6 +291,7 @@ Modify your AI configuration during an active session:
 - `.key set <new-key>` — Update your API key dynamically.
 
 From the command line:
+
 ```bash
 # Remove stored API key for a specific provider
 npx sandal-db config --remove-key google
