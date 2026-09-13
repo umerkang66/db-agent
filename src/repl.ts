@@ -1,4 +1,5 @@
 import readline from 'node:readline';
+import fs from 'node:fs';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
@@ -9,6 +10,7 @@ import { createDatabaseAgent } from './agent/graph.js';
 import { classifyIntent, REFUSAL_MESSAGE } from './agent/guardrails.js';
 import { ClassifierOptions } from './safety/classifier.js';
 import { formatSchemaForPrompt } from './agent/prompts.js';
+import { renderMarkdown } from './markdown.js';
 
 export interface ReplOptions {
   adapter: DatabaseAdapter;
@@ -18,6 +20,7 @@ export interface ReplOptions {
   strictMode: boolean;
   allowFullWipe: boolean;
   rowThreshold?: number;
+  renderMarkdown?: boolean;
 }
 
 export class ReplSession {
@@ -28,6 +31,7 @@ export class ReplSession {
   private strictMode: boolean;
   private allowFullWipe: boolean;
   private rowThreshold: number;
+  private renderMarkdown: boolean;
   private isRunning = true;
   private sessionId = `session-${Date.now()}`;
   private agent: ReturnType<typeof createDatabaseAgent>;
@@ -40,6 +44,7 @@ export class ReplSession {
     this.strictMode = options.strictMode;
     this.allowFullWipe = options.allowFullWipe;
     this.rowThreshold = options.rowThreshold ?? 50;
+    this.renderMarkdown = options.renderMarkdown ?? true;
 
     const classifierOptions: ClassifierOptions = {
       strictMode: this.strictMode,
@@ -112,6 +117,12 @@ export class ReplSession {
         continue;
       }
 
+      if (trimmed.startsWith('.md') || trimmed.startsWith('.markdown')) {
+        const entityOrText = trimmed.replace(/^\.(?:markdown|md)\s*/, '').trim();
+        this.handleRenderMarkdown(entityOrText);
+        continue;
+      }
+
       // 1. INTENT GUARDRAILS CHECK
       const intentSpinner = ora(chalk.blue('Analyzing intent...')).start();
       const intent = await classifyIntent(trimmed, this.model);
@@ -159,7 +170,11 @@ export class ReplSession {
         // Print final conclusion
         if (result.conclusion) {
           console.log('\n' + chalk.green('🤖 Answer:'));
-          console.log(chalk.white(result.conclusion) + '\n');
+          if (this.renderMarkdown) {
+            console.log(renderMarkdown(result.conclusion) + '\n');
+          } else {
+            console.log(chalk.white(result.conclusion) + '\n');
+          }
         }
       } catch (err: any) {
         agentSpinner.fail(chalk.red(`Execution failed: ${err.message}`));
@@ -310,6 +325,27 @@ export class ReplSession {
     }
   }
 
+  private handleRenderMarkdown(arg: string): void {
+    if (!arg) {
+      console.log(chalk.yellow('Usage: .md <markdown text or file path>'));
+      console.log(chalk.gray('Example: .md # Hello World'));
+      console.log(chalk.gray('Example: .md ./README.md'));
+      return;
+    }
+
+    try {
+      if (fs.existsSync(arg) && fs.statSync(arg).isFile()) {
+        const fileContent = fs.readFileSync(arg, 'utf-8');
+        console.log('\n' + renderMarkdown(fileContent) + '\n');
+        return;
+      }
+    } catch {
+      // Not a file, proceed to render arg as raw markdown text
+    }
+
+    console.log('\n' + renderMarkdown(arg) + '\n');
+  }
+
   private printWelcomeBanner(): void {
     const banner = [
       chalk.bold.cyan('SANDAL: Safe Agentic Natural-language Database Access Layer'),
@@ -319,9 +355,10 @@ export class ReplSession {
       `${chalk.bold('LLM Provider:')} ${chalk.blue(this.provider)} [${chalk.white(this.modelName)}]`,
       `${chalk.bold('Strict Mode:')} ${this.strictMode ? chalk.green('ON (Full wipes blocked)') : chalk.yellow('OFF')}`,
       `${chalk.bold('Allow Full Wipe:')} ${this.allowFullWipe ? chalk.red('ENABLED') : chalk.gray('NO')}`,
+      `${chalk.bold('Markdown Output:')} ${this.renderMarkdown ? chalk.green('ENABLED') : chalk.gray('DISABLED')}`,
       '',
       chalk.gray('Type your natural language request or SQL/Mongo query.'),
-      chalk.gray('Commands: .tables, .schema [name], .refresh, .help, exit'),
+      chalk.gray('Commands: .tables, .schema [name], .md [file|text], .refresh, .help, exit'),
     ].join('\n');
 
     console.log(
@@ -342,6 +379,7 @@ export class ReplSession {
           '',
           `${chalk.bold('.tables / .collections')}   List all tables or collections with row counts`,
           `${chalk.bold('.schema [name]')}           Show columns, types, and indexes for a table`,
+          `${chalk.bold('.md [file|text]')}          Render markdown file or text snippet in terminal`,
           `${chalk.bold('.refresh')}                 Force refresh cached schema introspection`,
           `${chalk.bold('.clear')}                   Clear terminal screen`,
           `${chalk.bold('.help')}                    Display this command reference`,

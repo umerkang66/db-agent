@@ -7,6 +7,7 @@ export interface SandalConfig {
   anthropicApiKey?: string;
   defaultProvider?: LLMProvider;
   defaultModel?: string;
+  renderMarkdown?: boolean;
 }
 
 export type DbAgentConfig = SandalConfig;
