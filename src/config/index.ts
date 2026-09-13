@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import dotenv from 'dotenv';
 import { SandalConfig, DbAgentConfig, ResolvedCredentials, LLMProvider } from './types.js';
+export * from './models.js';
 
 // Load .env from current directory if present
 dotenv.config();
@@ -106,6 +107,21 @@ export function maskApiKey(rawKey?: string): string {
 }
 
 /**
+ * Check if an API key is stored (in env or config) for a specific provider.
+ */
+export function getStoredApiKeyForProvider(provider: LLMProvider): string | undefined {
+  const config = readConfig();
+  switch (provider) {
+    case 'google':
+      return process.env.GEMINI_API_KEY || config.geminiApiKey;
+    case 'openai':
+      return process.env.OPENAI_API_KEY || config.openaiApiKey;
+    case 'anthropic':
+      return process.env.ANTHROPIC_API_KEY || config.anthropicApiKey;
+  }
+}
+
+/**
  * Determine default model name for each provider.
  */
 export function getDefaultModelForProvider(provider: LLMProvider): string {
@@ -196,8 +212,8 @@ export function resolveCredentials(options: {
       }
     }
 
-    // Fallback: if chosen provider has no key, check other providers
-    if (!apiKey) {
+    // Fallback: ONLY if chosen provider was NOT explicitly specified in CLI flags, check other providers
+    if (!apiKey && !options.cliProvider) {
       if (process.env.GEMINI_API_KEY || config.geminiApiKey) {
         provider = 'google';
         apiKey = process.env.GEMINI_API_KEY || config.geminiApiKey;
@@ -213,6 +229,8 @@ export function resolveCredentials(options: {
       } else {
         keySource = 'none';
       }
+    } else if (!apiKey) {
+      keySource = 'none';
     }
   }
 

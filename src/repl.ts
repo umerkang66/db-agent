@@ -23,6 +23,8 @@ import {
   addSavedConnection,
   resolveCredentials,
   getDefaultModelForProvider,
+  getModelsForProvider,
+  getStoredApiKeyForProvider,
 } from './config/index.js';
 import { LLMProvider } from './config/types.js';
 import { ChatMemoryManager } from './agent/memory.js';
@@ -451,21 +453,18 @@ export class ReplSession {
           chalk.white(this.modelName) +
           chalk.gray(` (${this.provider})`)
       );
-      console.log(chalk.bold.yellow('Suggested models for ' + this.provider + ':'));
+      console.log(chalk.bold.yellow(`\nAvailable models for ${this.provider.toUpperCase()}:`));
 
-      const commonModels: Record<string, string[]> = {
-        google: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
-        openai: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
-        anthropic: [
-          'claude-3-5-sonnet-latest',
-          'claude-3-5-haiku-latest',
-          'claude-3-7-sonnet-latest',
-        ],
-      };
-      const list = commonModels[this.provider] || [];
+      const list = getModelsForProvider(this.provider as LLMProvider);
       list.forEach((m, i) => {
-        const isCurrent = m === this.modelName ? chalk.green(' (Current)') : '';
-        console.log(`  [${i + 1}] ${m}${isCurrent}`);
+        const isCurrent = m.id === this.modelName ? chalk.green(' (Current)') : '';
+        const rec = m.recommended ? chalk.yellow(' [★ Recommended]') : '';
+        const badge = m.badge ? chalk.dim(` [${m.badge}]`) : '';
+        console.log(
+          `  [${i + 1}] ${chalk.bold(m.id)}${rec}${badge}${isCurrent}\n      ${chalk.gray(
+            `${m.name} (${m.contextWindow}) — ${m.description}`
+          )}`
+        );
       });
       console.log(chalk.gray('  [O] Other (type custom model name)'));
       console.log(chalk.gray('  [C] Cancel\n'));
@@ -475,7 +474,7 @@ export class ReplSession {
 
       const num = parseInt(input, 10);
       if (!isNaN(num) && num >= 1 && num <= list.length) {
-        targetModel = list[num - 1];
+        targetModel = list[num - 1].id;
       } else if (input.toLowerCase() === 'o') {
         const custom = (await ask(chalk.cyan('Enter model name: '))).trim();
         if (!custom) return;
@@ -517,7 +516,7 @@ export class ReplSession {
     newProvider: string,
     ask: (q: string) => Promise<string>
   ): Promise<void> {
-    let p = newProvider.toLowerCase();
+    let p = newProvider.toLowerCase().trim();
     if (!['google', 'openai', 'anthropic'].includes(p)) {
       console.log(chalk.bold.cyan(`\nCurrent Provider: `) + chalk.blue(this.provider));
       console.log('Available providers:');
@@ -537,40 +536,98 @@ export class ReplSession {
       }
     }
 
-    const resolved = resolveCredentials({ cliProvider: p });
-    let key = resolved.apiKey;
-    if (!key) {
-      console.log(chalk.yellow(`\nNo API key found for ${p.toUpperCase()}.`));
-      key = (await ask(chalk.cyan(`Enter API key for ${p.toUpperCase()}: `))).trim();
-      if (!key) {
+    const typedProvider = p as LLMProvider;
+
+    // 1. Check if API key is stored for this provider
+    let key = getStoredApiKeyForProvider(typedProvider);
+
+    if (key) {
+      console.log(
+        chalk.gray(`Found stored API key for ${typedProvider.toUpperCase()} (${maskApiKey(key)})`)
+      );
+    } else {
+      console.log(chalk.yellow(`\nNo stored API key found for ${typedProvider.toUpperCase()}.`));
+      key = (await ask(chalk.cyan(`Enter API key for ${typedProvider.toUpperCase()}: `))).trim();
+      while (!key) {
         console.log(chalk.red('API key cannot be empty.'));
-        return;
+        key = (await ask(chalk.cyan(`Enter API key for ${typedProvider.toUpperCase()} (or C to cancel): `))).trim();
+        if (key.toLowerCase() === 'c') return;
       }
+
       const save = (
         await ask(chalk.cyan('Save this API key to ~/.sandal/config.json? (Y/n): '))
       )
         .trim()
         .toLowerCase();
       if (save !== 'n') {
-        if (p === 'google') writeConfig({ geminiApiKey: key, defaultProvider: 'google' });
-        else if (p === 'openai') writeConfig({ openaiApiKey: key, defaultProvider: 'openai' });
-        else if (p === 'anthropic') writeConfig({ anthropicApiKey: key, defaultProvider: 'anthropic' });
+        if (typedProvider === 'google') writeConfig({ geminiApiKey: key });
+        else if (typedProvider === 'openai') writeConfig({ openaiApiKey: key });
+        else if (typedProvider === 'anthropic') writeConfig({ anthropicApiKey: key });
       }
     }
 
-    const defaultModel = getDefaultModelForProvider(p as LLMProvider);
+    // 2. Prompt for model
+    const providerModels = getModelsForProvider(typedProvider);
+    console.log(chalk.bold.yellow(`\nAvailable models for ${typedProvider.toUpperCase()}:`));
+    providerModels.forEach((m, i) => {
+      const isCurrent = (typedProvider === this.provider && m.id === this.modelName) ? chalk.green(' (Current)') : '';
+      const rec = m.recommended ? chalk.yellow(' [★ Recommended]') : '';
+      const badge = m.badge ? chalk.dim(` [${m.badge}]`) : '';
+      console.log(
+        `  [${i + 1}] ${chalk.bold(m.id)}${rec}${badge}${isCurrent}\n      ${chalk.gray(
+          `${m.name} (${m.contextWindow}) — ${m.description}`
+        )}`
+      );
+    });
+
+    const defaultModel = getDefaultModelForProvider(typedProvider);
+    console.log(chalk.gray(`  [Enter] Default (${defaultModel})`));
+    console.log(chalk.gray('  [O] Other (type custom model name)'));
+    console.log(chalk.gray('  [C] Cancel\n'));
+
+    const choice = (
+      await ask(chalk.cyan(`Select model [1-${providerModels.length}, name, Enter]: `))
+    ).trim();
+    if (choice.toLowerCase() === 'c') return;
+
+    let targetModel = defaultModel;
+    const mNum = parseInt(choice, 10);
+    if (!isNaN(mNum) && mNum >= 1 && mNum <= providerModels.length) {
+      targetModel = providerModels[mNum - 1].id;
+    } else if (choice.toLowerCase() === 'o') {
+      const custom = (await ask(chalk.cyan('Enter custom model name: '))).trim();
+      if (!custom) return;
+      targetModel = custom;
+    } else if (choice) {
+      targetModel = choice;
+    }
+
+    // Optionally save default provider and model to config
+    const saveDefault = (
+      await ask(chalk.cyan(`Save ${typedProvider.toUpperCase()} and ${targetModel} as your default in ~/.sandal/config.json? (y/N): `))
+    ).trim().toLowerCase();
+    if (saveDefault === 'y' || saveDefault === 'yes') {
+      writeConfig({
+        defaultProvider: typedProvider,
+        defaultModel: targetModel,
+      });
+      console.log(chalk.green('Saved default provider and model to ~/.sandal/config.json.'));
+    }
+
     try {
       this.model = createChatModel({
-        provider: p as LLMProvider,
-        model: defaultModel,
+        provider: typedProvider,
+        model: targetModel,
         apiKey: key,
       });
-      this.provider = p;
-      this.modelName = defaultModel;
+      this.provider = typedProvider;
+      this.modelName = targetModel;
       this.apiKey = key;
       this.initAgent();
       console.log(
-        chalk.green(`\nSwitched provider to ${p.toUpperCase()} with model ${defaultModel}.\n`)
+        chalk.green(
+          `\nSwitched provider to ${chalk.bold(typedProvider.toUpperCase())} with model ${chalk.bold(targetModel)}.\n`
+        )
       );
     } catch (err: any) {
       console.log(chalk.red(`Failed to switch provider: ${err.message}\n`));

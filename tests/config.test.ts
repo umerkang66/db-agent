@@ -124,5 +124,26 @@ describe('Configuration & Credential Masking', () => {
       removeApiKey('google');
       expect(readConfig().geminiApiKey).toBeUndefined();
     });
+
+    it('correctly retrieves stored API keys for each provider via getStoredApiKeyForProvider', async () => {
+      const { writeConfig, getStoredApiKeyForProvider, removeApiKey } = await import(
+        '../src/config/index.js'
+      );
+
+      writeConfig({
+        geminiApiKey: 'gemini-key-123',
+        openaiApiKey: 'openai-key-456',
+        anthropicApiKey: 'anthropic-key-789',
+      });
+
+      expect(getStoredApiKeyForProvider('google')).toBe('gemini-key-123');
+      expect(getStoredApiKeyForProvider('openai')).toBe('openai-key-456');
+      expect(getStoredApiKeyForProvider('anthropic')).toBe('anthropic-key-789');
+
+      removeApiKey('all');
+      expect(getStoredApiKeyForProvider('google')).toBeUndefined();
+      expect(getStoredApiKeyForProvider('openai')).toBeUndefined();
+      expect(getStoredApiKeyForProvider('anthropic')).toBeUndefined();
+    });
   });
 });

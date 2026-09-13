@@ -16,6 +16,9 @@ import {
   getSavedConnections,
   addSavedConnection,
   removeSavedConnection,
+  promptModelSelection,
+  renderModelsTable,
+  getStoredApiKeyForProvider,
 } from './config/index.js';
 import { LLMProvider } from './config/types.js';
 import { createDatabaseAdapter, detectDatabaseType } from './db/connection.js';
@@ -61,7 +64,26 @@ program
     true,
   )
   .option('--no-markdown', 'Disable terminal markdown rendering')
+  .option(
+    '--select-model',
+    'Interactively choose a model from the list of available models',
+  )
+  .option(
+    '--models [provider]',
+    'List all publicly available models in the terminal (google | openai | anthropic)',
+  )
   .action(async (cliDbUrl, options) => {
+    if (options.models !== undefined) {
+      const prov =
+        typeof options.models === 'string' && options.models.trim()
+          ? (options.models.toLowerCase() as LLMProvider)
+          : options.provider
+            ? (options.provider.toLowerCase() as LLMProvider)
+            : undefined;
+      console.log(renderModelsTable(prov));
+      return;
+    }
+
     try {
       await runCli({
         cliDbUrl,
@@ -72,6 +94,7 @@ program
         allowFullWipe: Boolean(options.allowFullWipe),
         rowThreshold: parseInt(options.threshold, 10) || 50,
         renderMarkdown: options.markdown !== false,
+        selectModel: Boolean(options.selectModel),
       });
     } catch (err: any) {
       console.error(chalk.red(`\nError: ${err.message}`));
@@ -96,6 +119,14 @@ const configCmd = program
   )
   .option('--set-model <model>', 'Set default model name')
   .option(
+    '--select-model',
+    'Interactively select default model from the available models list',
+  )
+  .option(
+    '--models [provider]',
+    'List all publicly available models in the terminal (google | openai | anthropic)',
+  )
+  .option(
     '--set-markdown <boolean>',
     'Enable or disable default terminal markdown rendering (true | false)',
   )
@@ -116,7 +147,25 @@ const configCmd = program
     'Display current stored configuration (with masked secrets)',
   )
   .option('--path', 'Print the path to the configuration file')
-  .action(opts => {
+  .action(async opts => {
+    if (opts.models !== undefined) {
+      const prov =
+        typeof opts.models === 'string' && opts.models.trim()
+          ? (opts.models.toLowerCase() as LLMProvider)
+          : undefined;
+      console.log(renderModelsTable(prov));
+      return;
+    }
+
+    if (opts.selectModel) {
+      const cfg = readConfig();
+      const prov = (opts.setProvider || cfg.defaultProvider || 'google') as LLMProvider;
+      const chosen = await promptModelSelection(prov, cfg.defaultModel);
+      writeConfig({ defaultModel: chosen });
+      console.log(chalk.green(`\nUpdated default model to: ${chosen} (${prov})\n`));
+      return;
+    }
+
     if (opts.path) {
       console.log(getConfigFilePath());
       return;
@@ -198,7 +247,7 @@ const configCmd = program
       );
     }
     if (opts.setProvider) {
-      const p = opts.setProvider.toLowerCase();
+      const p = opts.setProvider.toLowerCase() as LLMProvider;
       if (!['google', 'openai', 'anthropic'].includes(p)) {
         console.error(
           chalk.red('Invalid provider. Expected google, openai, or anthropic.'),
@@ -207,6 +256,28 @@ const configCmd = program
       }
       updates.defaultProvider = p;
       console.log(chalk.green(`Updated default provider: ${p}`));
+
+      // 1. Check if API key is stored for this provider
+      const existingKey = getStoredApiKeyForProvider(p);
+      if (!existingKey && !opts.setKey && !opts.setGemini && !opts.setOpenai && !opts.setAnthropic) {
+        console.log(chalk.yellow(`\nNo stored API key found for ${p.toUpperCase()}.`));
+        const newKey = await input({
+          message: `Enter API key for ${p.toUpperCase()}:`,
+          validate: val => (val.trim().length > 0 ? true : 'API key cannot be empty.'),
+        });
+        if (p === 'google') updates.geminiApiKey = newKey.trim();
+        else if (p === 'openai') updates.openaiApiKey = newKey.trim();
+        else if (p === 'anthropic') updates.anthropicApiKey = newKey.trim();
+        console.log(chalk.green(`Saved API key for ${p.toUpperCase()}.`));
+      }
+
+      // 2. Also prompt for model if not explicitly specified via --set-model
+      if (!opts.setModel) {
+        console.log(chalk.cyan(`\nChoose default model for ${p.toUpperCase()}:`));
+        const chosenModel = await promptModelSelection(p);
+        updates.defaultModel = chosenModel;
+        console.log(chalk.green(`Updated default model for ${p}: ${chosenModel}`));
+      }
     }
     if (opts.setModel) {
       updates.defaultModel = opts.setModel;
@@ -310,6 +381,7 @@ async function runCli(opts: {
   allowFullWipe: boolean;
   rowThreshold: number;
   renderMarkdown?: boolean;
+  selectModel?: boolean;
 }) {
   const config = readConfig();
   const shouldRenderMarkdown =
@@ -364,16 +436,26 @@ async function runCli(opts: {
   let provider = resolved.provider;
   let apiKey = resolved.apiKey;
 
+  const isProviderExplicitlyChanged = Boolean(
+    opts.cliProvider && opts.cliProvider.toLowerCase() !== config.defaultProvider
+  );
+
   if (!apiKey) {
-    console.log(chalk.yellow('\nNo API key found in environment or config.'));
-    provider = await select<LLMProvider>({
-      message: 'Select your LLM provider:',
-      choices: [
-        { name: 'Google Gemini (GEMINI_API_KEY)', value: 'google' },
-        { name: 'OpenAI (OPENAI_API_KEY)', value: 'openai' },
-        { name: 'Anthropic (ANTHROPIC_API_KEY)', value: 'anthropic' },
-      ],
-    });
+    if (opts.cliProvider) {
+      console.log(
+        chalk.yellow(`\nNo API key found for ${provider.toUpperCase()} in environment or config.`),
+      );
+    } else {
+      console.log(chalk.yellow('\nNo API key found in environment or config.'));
+      provider = await select<LLMProvider>({
+        message: 'Select your LLM provider:',
+        choices: [
+          { name: 'Google Gemini (GEMINI_API_KEY)', value: 'google' },
+          { name: 'OpenAI (OPENAI_API_KEY)', value: 'openai' },
+          { name: 'Anthropic (ANTHROPIC_API_KEY)', value: 'anthropic' },
+        ],
+      });
+    }
 
     apiKey = await input({
       message: `Enter your ${provider.toUpperCase()} API key:`,
@@ -381,23 +463,34 @@ async function runCli(opts: {
         val.trim().length > 0 ? true : 'API key cannot be empty.',
     });
 
+    let chosenModel = opts.cliModel;
+    if (!chosenModel) {
+      chosenModel = await promptModelSelection(provider);
+    }
+
     const saveKey = await confirm({
-      message: 'Save this API key to ~/.sandal/config.json?',
+      message: 'Save this API key and default model to ~/.sandal/config.json?',
       default: true,
     });
 
     if (saveKey) {
-      if (provider === 'google')
-        writeConfig({ geminiApiKey: apiKey, defaultProvider: 'google' });
-      else if (provider === 'openai')
-        writeConfig({ openaiApiKey: apiKey, defaultProvider: 'openai' });
-      else if (provider === 'anthropic')
-        writeConfig({ anthropicApiKey: apiKey, defaultProvider: 'anthropic' });
+      const updates: any = {
+        defaultProvider: provider,
+        defaultModel: chosenModel,
+      };
+      if (provider === 'google') updates.geminiApiKey = apiKey;
+      else if (provider === 'openai') updates.openaiApiKey = apiKey;
+      else if (provider === 'anthropic') updates.anthropicApiKey = apiKey;
+      writeConfig(updates);
     }
   }
 
-  const modelName =
-    opts.cliModel || resolved.model || getDefaultModelForProvider(provider);
+  let modelName = opts.cliModel;
+  if (opts.selectModel || (isProviderExplicitlyChanged && !opts.cliModel)) {
+    modelName = await promptModelSelection(provider, resolved.model);
+  } else if (!modelName) {
+    modelName = resolved.model || getDefaultModelForProvider(provider);
+  }
 
   // 3. Connect to DB
   const dbSpinner = ora(
