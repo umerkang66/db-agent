@@ -16,6 +16,10 @@ export function createMarkdownRenderer(options: MarkdownRenderOptions = {}): Mar
     codespan: chalk.yellow,
     code: chalk.yellow,
     blockquote: chalk.gray.italic,
+    hr: (input?: string) => {
+      const w = Math.min(options.width ?? (process.stdout.columns || 80), 80);
+      return chalk.gray((input && input.trim()) ? input : '─'.repeat(w));
+    },
     table: chalk.reset,
     tableOptions: {
       style: {

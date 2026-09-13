@@ -121,6 +121,7 @@ npx sandal-db@latest config --path
 ```text
 npx sandal-db@latest [options] [dbUrl]
 npx sandal-db@latest config [options]
+npx sandal-db@latest md [options] [fileOrText]
 ```
 
 ### Global Options
@@ -135,6 +136,8 @@ npx sandal-db@latest config [options]
 | `--no-strict`           | `flag`    | Disables strict safety mode.                                                       | `false`              |
 | `--allow-full-wipe`     | `flag`    | Explicitly permits database-level drops after interactive phrase confirmation.     | `false`              |
 | `--threshold <number>`  | `integer` | Row count threshold above which updates are classified as dangerous operations.    | `50`                 |
+| `--markdown`            | `boolean` | Formats and renders LLM responses as rich terminal markdown.                      | `true`               |
+| `--no-markdown`         | `flag`    | Disables terminal markdown rendering and outputs raw text.                         | `false`              |
 | `-V, --version`         | `flag`    | Output the version number.                                                         |                      |
 | `-h, --help`            | `flag`    | Display command help and exit.                                                     |                      |
 
@@ -164,6 +167,7 @@ Dot commands provide direct utility functions without issuing requests to the LL
 | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `.tables` or `.collections` | Lists all discovered database tables or MongoDB collections with current row counts.                  |
 | `.schema [name]`            | Displays column names, data types, nullability constraints, and primary keys for the specified table. |
+| `.md [file\|text]`          | Renders markdown file or inline markdown text with syntax highlighting directly in the terminal.      |
 | `.refresh`                  | Invalidates cached schema metadata and re-introspects the live database.                              |
 | `.clear`                    | Clears the terminal screen.                                                                           |
 | `.help`                     | Prints the interactive command reference and sample queries.                                          |
@@ -198,6 +202,43 @@ sandal [postgres]> Create a new table audit_events with id, event_name, payload 
 ```text
 sandal [postgres]> Update users set status = 'dormant' where last_active_at < '2024-01-01'.
 sandal [mongodb]> Delete error log documents created more than 90 days ago.
+```
+
+#### Terminal Markdown Rendering
+
+SANDAL automatically parses and renders LLM answers with syntax-highlighted code blocks, formatted Unicode tables, bullet points, headers, and styled text directly inside your terminal:
+
+```text
+sandal [postgres]> Show top customers and give me an analysis.
+🤖 Answer:
+# Customer Insights
+
+Here is the breakdown of top revenue generators:
+
+┌─────────────────┬──────────┬──────────────┐
+│ Customer Name   │ Orders   │ Total Spent  │
+├─────────────────┼──────────┼──────────────┤
+│ Acme Corp       │ 34       │ $48,250.00   │
+│ Initech LLC     │ 28       │ $36,120.00   │
+└─────────────────┴──────────┴──────────────┘
+
+Key Findings:
+  * **Acme Corp** is the highest-value account with 34 completed orders.
+  * Recommended index for faster queries:
+    CREATE INDEX CONCURRENTLY idx_orders_customer ON orders(customer_id);
+```
+
+You can also view or render any markdown file or snippet directly from the command line:
+
+```bash
+# Render a markdown file in the terminal
+npx sandal-db md README.md
+
+# Pipe markdown from standard input
+echo "# Hello Terminal" | npx sandal-db md
+
+# Disable markdown rendering if plain text is desired
+npx sandal-db --no-markdown postgresql://...
 ```
 
 ---

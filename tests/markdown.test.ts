@@ -84,4 +84,28 @@ describe('Markdown Terminal Renderer', () => {
     expect(typeof res).toBe('string');
     expect(res).toContain('Custom Heading');
   });
+
+  it('renders blockquotes and horizontal rules', () => {
+    const bq = renderMarkdown('> Important warning message');
+    expect(bq).toContain('Important warning message');
+
+    const hr = renderMarkdown('Above\n\n---\n\nBelow');
+    expect(hr).toContain('Above');
+    expect(hr).toContain('Below');
+    expect(hr).toContain('─');
+  });
+
+  it('renders links and strikethrough text', () => {
+    const link = renderMarkdown('[Documentation](https://example.com/docs)');
+    expect(link).toContain('Documentation');
+    expect(link).toContain('https://example.com/docs');
+
+    const del = renderMarkdown('~~deprecated~~');
+    expect(del).toContain('deprecated');
+  });
+
+  it('safely handles unexpected non-string errors without crashing', () => {
+    // Non-string inputs return empty string
+    expect(renderMarkdown(12345 as any)).toBe('');
+  });
 });
