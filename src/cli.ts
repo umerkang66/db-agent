@@ -425,6 +425,7 @@ async function runCli(opts: {
   });
 
   // 5. Start REPL
+  process.stdin.resume();
   const repl = new ReplSession({
     adapter,
     model,

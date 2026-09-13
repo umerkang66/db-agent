@@ -1,6 +1,6 @@
+import readline from 'node:readline';
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { confirm, input } from '@inquirer/prompts';
 import { SafetyClassification } from './classifier.js';
 import { ExecutableQuery } from '../db/adapter.js';
 
@@ -9,10 +9,55 @@ export interface ConfirmationResult {
   reason?: string;
 }
 
+export type AskQuestionFn = (prompt: string) => Promise<string>;
+
+export async function defaultAsk(promptText: string): Promise<string> {
+  process.stdin.resume();
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise<string>((resolve) => {
+    rl.question(promptText, (answer) => {
+      rl.close();
+      process.stdin.resume();
+      resolve(answer);
+    });
+  });
+}
+
+export async function promptConfirm(
+  message: string,
+  defaultValue: boolean,
+  ask: AskQuestionFn = defaultAsk
+): Promise<boolean> {
+  const suffix = defaultValue ? chalk.gray(' (Y/n): ') : chalk.gray(' (y/N): ');
+  const response = (await ask(`${message}${suffix}`)).trim().toLowerCase();
+  if (!response) {
+    return defaultValue;
+  }
+  if (['y', 'yes', 'true', '1'].includes(response)) {
+    return true;
+  }
+  if (['n', 'no', 'false', '0'].includes(response)) {
+    return false;
+  }
+  return defaultValue;
+}
+
+export async function promptInput(
+  message: string,
+  ask: AskQuestionFn = defaultAsk
+): Promise<string> {
+  const response = await ask(message);
+  return response.trim();
+}
+
 export async function requestUserConfirmation(
   query: ExecutableQuery,
   safety: SafetyClassification,
-  affectedRows: number | null
+  affectedRows: number | null,
+  ask: AskQuestionFn = defaultAsk
 ): Promise<ConfirmationResult> {
   const queryDisplay = (query.sql || query.rawDisplay || '').trim();
 
@@ -36,9 +81,10 @@ export async function requestUserConfirmation(
       })
     );
 
-    const typed = await input({
-      message: chalk.red.bold(`Type "${safety.literalWord || 'DROP DATABASE'}" to confirm full wipe:`),
-    });
+    const typed = await promptInput(
+      chalk.red.bold(`Type "${safety.literalWord || 'DROP DATABASE'}" to confirm full wipe: `),
+      ask
+    );
 
     if (typed.trim() === safety.literalWord) {
       return { confirmed: true };
@@ -83,11 +129,12 @@ export async function requestUserConfirmation(
 
     // If literal word is required (e.g. no WHERE clause: DELETE ALL, UPDATE ALL, DROP TABLE)
     if (safety.requiresLiteralWord && safety.literalWord) {
-      const typed = await input({
-        message: chalk.hex('#FFA500').bold(
-          `Destructive operation with no filter. Type "${safety.literalWord}" to confirm:`
+      const typed = await promptInput(
+        chalk.hex('#FFA500').bold(
+          `Destructive operation with no filter. Type "${safety.literalWord}" to confirm: `
         ),
-      });
+        ask
+      );
 
       if (typed.trim() === safety.literalWord) {
         return { confirmed: true };
@@ -99,10 +146,11 @@ export async function requestUserConfirmation(
     }
 
     // Otherwise standard y/N with dangerous prompt
-    const answer = await confirm({
-      message: chalk.hex('#FFA500').bold('Proceed with dangerous operation?'),
-      default: false,
-    });
+    const answer = await promptConfirm(
+      chalk.hex('#FFA500').bold('Proceed with dangerous operation?'),
+      false,
+      ask
+    );
 
     return { confirmed: answer };
   }
@@ -141,10 +189,11 @@ export async function requestUserConfirmation(
       })
     );
 
-    const answer = await confirm({
-      message: chalk.cyan.bold('Apply this structural change?'),
-      default: true,
-    });
+    const answer = await promptConfirm(
+      chalk.cyan.bold('Apply this structural change?'),
+      true,
+      ask
+    );
 
     return { confirmed: answer };
   }
@@ -170,10 +219,11 @@ export async function requestUserConfirmation(
       })
     );
 
-    const answer = await confirm({
-      message: chalk.magenta.bold('Execute write query?'),
-      default: false,
-    });
+    const answer = await promptConfirm(
+      chalk.magenta.bold('Execute write query?'),
+      false,
+      ask
+    );
 
     return { confirmed: answer };
   }
@@ -194,10 +244,11 @@ export async function requestUserConfirmation(
     })
   );
 
-  const answer = await confirm({
-    message: chalk.green.bold('Execute read query?'),
-    default: true,
-  });
+  const answer = await promptConfirm(
+    chalk.green.bold('Execute read query?'),
+    true,
+    ask
+  );
 
   return { confirmed: answer };
 }

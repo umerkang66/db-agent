@@ -11,6 +11,7 @@ import { createDatabaseAgent } from './agent/graph.js';
 import { createChatModel } from './agent/llm.js';
 import { classifyIntent, REFUSAL_MESSAGE } from './agent/guardrails.js';
 import { ClassifierOptions } from './safety/classifier.js';
+import { requestUserConfirmation } from './safety/confirm.js';
 import { formatSchemaForPrompt } from './agent/prompts.js';
 import { renderMarkdown } from './markdown.js';
 import {
@@ -50,9 +51,11 @@ export class ReplSession {
   private renderMarkdown: boolean;
   private isRunning = true;
   private sessionId: string;
-  private agent: ReturnType<typeof createDatabaseAgent>;
+  private agent!: ReturnType<typeof createDatabaseAgent>;
   private memoryManager: ChatMemoryManager;
   private classifierOptions: ClassifierOptions;
+  private rl?: readline.Interface;
+  private currentSpinner?: ReturnType<typeof ora>;
 
   constructor(options: ReplOptions) {
     this.adapter = options.adapter;
@@ -71,11 +74,7 @@ export class ReplSession {
       rowThresholdForDangerousUpdate: this.rowThreshold,
     };
 
-    this.agent = createDatabaseAgent({
-      adapter: this.adapter,
-      model: this.model,
-      classifierOptions: this.classifierOptions,
-    });
+    this.initAgent();
 
     this.memoryManager = new ChatMemoryManager();
     const initialSession = this.memoryManager.createSession('New Chat', this.adapter.connectionUrl);
@@ -87,6 +86,42 @@ export class ReplSession {
     }
   }
 
+  private initAgent(): void {
+    this.agent = createDatabaseAgent({
+      adapter: this.adapter,
+      model: this.model,
+      classifierOptions: this.classifierOptions,
+      confirmFn: async (query, safety, affectedRows) => {
+        if (this.currentSpinner && this.currentSpinner.isSpinning) {
+          this.currentSpinner.stop();
+        }
+        const confirmResult = await requestUserConfirmation(
+          query,
+          safety,
+          affectedRows,
+          this.askQuestion.bind(this)
+        );
+        if (confirmResult.confirmed && this.currentSpinner) {
+          this.currentSpinner.text = chalk.cyan('Executing query and analyzing...');
+          this.currentSpinner.start();
+        }
+        return confirmResult;
+      },
+    });
+  }
+
+  private askQuestion(query: string): Promise<string> {
+    process.stdin.resume();
+    if (!this.rl || (this.rl as any).closed) {
+      this.rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+        terminal: true,
+      });
+    }
+    return new Promise((resolve) => this.rl!.question(query, resolve));
+  }
+
   private getPromptText(): string {
     return chalk.cyan(`sandal [${this.adapter.type}]> `);
   }
@@ -95,17 +130,17 @@ export class ReplSession {
     this.setupSignalHandlers();
     this.printWelcomeBanner();
 
-    const rl = readline.createInterface({
+    process.stdin.resume();
+    this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: true,
     });
 
-    const askQuestion = (query: string): Promise<string> => {
-      return new Promise((resolve) => rl.question(query, resolve));
-    };
+    const askQuestion = this.askQuestion.bind(this);
 
     while (this.isRunning) {
+      process.stdin.resume();
       const input = await askQuestion(this.getPromptText());
       const trimmed = input.trim();
 
@@ -242,6 +277,7 @@ export class ReplSession {
 
       // 2. RUN AGENT GRAPH WITH CONVERSATION MEMORY
       const agentSpinner = ora(chalk.cyan('Agent planning query...')).start();
+      this.currentSpinner = agentSpinner;
 
       try {
         const historyMessages = this.memoryManager.toLangChainMessages(this.sessionId, 6);
@@ -257,7 +293,9 @@ export class ReplSession {
           }
         );
 
-        agentSpinner.stop();
+        if (agentSpinner.isSpinning) {
+          agentSpinner.stop();
+        }
 
         // If query was executed and returned rows, render table
         if (result.queryResult && result.queryResult.success && result.queryResult.rows) {
@@ -295,11 +333,23 @@ export class ReplSession {
           );
         }
       } catch (err: any) {
-        agentSpinner.fail(chalk.red(`Execution failed: ${err.message}`));
+        if (agentSpinner.isSpinning) {
+          agentSpinner.fail(chalk.red(`Execution failed: ${err.message}`));
+        } else {
+          console.error(chalk.red(`\nExecution failed: ${err.message}\n`));
+        }
+      } finally {
+        if (agentSpinner.isSpinning) {
+          agentSpinner.stop();
+        }
+        this.currentSpinner = undefined;
+        process.stdin.resume();
       }
     }
 
-    rl.close();
+    if (this.rl && !(this.rl as any).closed) {
+      this.rl.close();
+    }
     await this.shutdown();
   }
 
@@ -371,11 +421,7 @@ export class ReplSession {
 
       this.adapter = newAdapter;
       // Re-create agent for the new adapter while maintaining state & chat memory
-      this.agent = createDatabaseAgent({
-        adapter: this.adapter,
-        model: this.model,
-        classifierOptions: this.classifierOptions,
-      });
+      this.initAgent();
 
       addSavedConnection(urlToConnect);
       spinner.succeed(
@@ -460,11 +506,7 @@ export class ReplSession {
         apiKey: this.apiKey,
       });
       this.modelName = targetModel;
-      this.agent = createDatabaseAgent({
-        adapter: this.adapter,
-        model: this.model,
-        classifierOptions: this.classifierOptions,
-      });
+      this.initAgent();
       console.log(chalk.green(`\nUpdated active model to: ${targetModel} [${this.provider}]\n`));
     } catch (err: any) {
       console.log(chalk.red(`\nFailed to update model: ${err.message}\n`));
@@ -526,11 +568,7 @@ export class ReplSession {
       this.provider = p;
       this.modelName = defaultModel;
       this.apiKey = key;
-      this.agent = createDatabaseAgent({
-        adapter: this.adapter,
-        model: this.model,
-        classifierOptions: this.classifierOptions,
-      });
+      this.initAgent();
       console.log(
         chalk.green(`\nSwitched provider to ${p.toUpperCase()} with model ${defaultModel}.\n`)
       );
@@ -579,11 +617,7 @@ export class ReplSession {
         model: this.modelName,
         apiKey: newKey,
       });
-      this.agent = createDatabaseAgent({
-        adapter: this.adapter,
-        model: this.model,
-        classifierOptions: this.classifierOptions,
-      });
+      this.initAgent();
       console.log(chalk.green(`\nUpdated API key for "${this.provider}" and refreshed model.\n`));
       return;
     }
@@ -622,11 +656,7 @@ export class ReplSession {
   private handleNewChat(): void {
     const newSession = this.memoryManager.createSession('New Chat', this.adapter.connectionUrl);
     this.sessionId = newSession.id;
-    this.agent = createDatabaseAgent({
-      adapter: this.adapter,
-      model: this.model,
-      classifierOptions: this.classifierOptions,
-    });
+    this.initAgent();
     console.log(chalk.green(`\nStarted fresh chat session: ${this.sessionId}`));
     console.log(chalk.gray('Chat memory is clean for this new session.\n'));
   }
@@ -657,11 +687,7 @@ export class ReplSession {
     }
 
     this.sessionId = session.id;
-    this.agent = createDatabaseAgent({
-      adapter: this.adapter,
-      model: this.model,
-      classifierOptions: this.classifierOptions,
-    });
+    this.initAgent();
     console.log(
       chalk.green(
         `\nSwitched to chat: "${session.title}" (${session.messages.length} messages in memory).\n`
@@ -695,11 +721,7 @@ export class ReplSession {
 
   private handleClearChat(): void {
     this.memoryManager.clearSession(this.sessionId);
-    this.agent = createDatabaseAgent({
-      adapter: this.adapter,
-      model: this.model,
-      classifierOptions: this.classifierOptions,
-    });
+    this.initAgent();
     console.log(chalk.green(`\nChat memory for session [${this.sessionId}] has been cleared.\n`));
   }
 
@@ -946,6 +968,9 @@ export class ReplSession {
   }
 
   public async shutdown(): Promise<void> {
+    if (this.rl && !(this.rl as any).closed) {
+      this.rl.close();
+    }
     if (this.adapter.isConnected()) {
       try {
         await this.adapter.disconnect();

@@ -3,7 +3,7 @@ import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { HumanMessage, SystemMessage, AIMessage, BaseMessage } from '@langchain/core/messages';
 import { DatabaseAdapter, DatabaseSchema, ExecutableQuery, QueryResult } from '../db/adapter.js';
 import { classifyQuery, SafetyClassification, ClassifierOptions } from '../safety/classifier.js';
-import { requestUserConfirmation } from '../safety/confirm.js';
+import { requestUserConfirmation, ConfirmationResult } from '../safety/confirm.js';
 import { checkStrictWipe } from './guardrails.js';
 import { getSystemPrompt, formatSchemaForPrompt } from './prompts.js';
 
@@ -11,6 +11,11 @@ export interface GraphConfig {
   adapter: DatabaseAdapter;
   model: BaseChatModel;
   classifierOptions?: ClassifierOptions;
+  confirmFn?: (
+    query: ExecutableQuery,
+    safety: SafetyClassification,
+    affectedRows: number | null
+  ) => Promise<ConfirmationResult>;
 }
 
 export const AgentStateAnnotation = Annotation.Root({
@@ -230,7 +235,8 @@ Do not wrap with markdown or code fences.`;
       return { confirmed: false, cancelReason: 'Missing query or safety classification.' };
     }
 
-    const result = await requestUserConfirmation(
+    const confirmHandler = config.confirmFn || requestUserConfirmation;
+    const result = await confirmHandler(
       state.generatedQuery,
       state.safety,
       state.affectedRowCount ?? null
