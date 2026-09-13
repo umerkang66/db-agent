@@ -1,0 +1,63 @@
+{
+  "name": "db-agent",
+  "version": "1.0.0",
+  "description": "Production-grade agentic database assistant CLI using LangGraph and LLMs (Google Gemini, OpenAI, Anthropic)",
+  "type": "module",
+  "bin": {
+    "db-agent": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build && npm test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "cli",
+    "database",
+    "ai-agent",
+    "langgraph",
+    "gemini",
+    "openai",
+    "anthropic",
+    "postgres",
+    "mongodb",
+    "sql",
+    "guardrails"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@inquirer/prompts": "^7.3.2",
+    "@langchain/anthropic": "^0.3.15",
+    "@langchain/core": "^0.3.40",
+    "@langchain/google-genai": "^0.1.8",
+    "@langchain/langgraph": "^0.2.55",
+    "@langchain/openai": "^0.4.4",
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "cli-table3": "^0.6.5",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "mongodb": "^6.14.0",
+    "ora": "^8.2.0",
+    "pg": "^8.13.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@types/pg": "^8.11.11",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
+  }
+}
