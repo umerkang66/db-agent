@@ -1,6 +1,6 @@
 {
   "name": "sandal-db",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "SANDAL - Safe Agentic Natural-language Database Access Layer. Production-grade agentic database assistant CLI using LangGraph and LLMs (Google Gemini, OpenAI, Anthropic)",
   "type": "module",
   "bin": {
