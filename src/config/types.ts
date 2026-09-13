@@ -8,6 +8,7 @@ export interface SandalConfig {
   defaultProvider?: LLMProvider;
   defaultModel?: string;
   renderMarkdown?: boolean;
+  savedConnections?: string[];
 }
 
 export type DbAgentConfig = SandalConfig;

@@ -36,7 +36,8 @@ const OBVIOUS_DATABASE_PATTERNS = [
  */
 export async function classifyIntent(
   input: string,
-  model?: BaseChatModel
+  model?: BaseChatModel,
+  historyContext?: string
 ): Promise<IntentResult> {
   const trimmed = input.trim();
 
@@ -64,6 +65,11 @@ export async function classifyIntent(
     return { isDatabaseTask: true };
   }
 
+  // If there is prior conversation context, common conversational follow-ups are database tasks
+  if (historyContext && /^(?:now\s+|and\s+|also\s+|then\s+)?(?:count|sort|filter|show|order|group|limit|delete|update|find|export|why|how many|what about|which ones?|where)\b/i.test(trimmed)) {
+    return { isDatabaseTask: true };
+  }
+
   // 3. Fallback to lightweight LLM classifier
   if (!model) {
     // If no model provided (e.g. offline/testing), assume DB task unless clearly out of scope
@@ -71,8 +77,12 @@ export async function classifyIntent(
   }
 
   try {
+    const promptText = historyContext
+      ? `${INTENT_CLASSIFICATION_PROMPT}\n\nRecent conversation context:\n${historyContext}\n\nCurrent user request:\n${trimmed}`
+      : `${INTENT_CLASSIFICATION_PROMPT}\n${trimmed}`;
+
     const response = await model.invoke([
-      new HumanMessage(INTENT_CLASSIFICATION_PROMPT + '\n' + trimmed),
+      new HumanMessage(promptText),
     ]);
 
     const content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);

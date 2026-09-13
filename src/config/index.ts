@@ -216,7 +216,7 @@ export function resolveCredentials(options: {
     }
   }
 
-  // 4. Resolve Model
+    // 4. Resolve Model
   const model =
     options.cliModel ||
     config.defaultModel ||
@@ -233,3 +233,93 @@ export function resolveCredentials(options: {
     },
   };
 }
+
+/**
+ * Removes stored API key(s) from ~/.sandal/config.json.
+ */
+export function removeApiKey(provider: LLMProvider | 'all'): void {
+  const filePath = getConfigFilePath();
+  const dirPath = getConfigDirPath();
+  const cfg = readConfig();
+
+  if (provider === 'all') {
+    delete cfg.geminiApiKey;
+    delete cfg.openaiApiKey;
+    delete cfg.anthropicApiKey;
+  } else if (provider === 'google') {
+    delete cfg.geminiApiKey;
+  } else if (provider === 'openai') {
+    delete cfg.openaiApiKey;
+  } else if (provider === 'anthropic') {
+    delete cfg.anthropicApiKey;
+  }
+
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+  }
+
+  fs.writeFileSync(filePath, JSON.stringify(cfg, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Safely ignore on Windows
+  }
+}
+
+/**
+ * Retrieve saved database connections history from config.
+ */
+export function getSavedConnections(): string[] {
+  const cfg = readConfig();
+  const list = Array.isArray(cfg.savedConnections) ? [...cfg.savedConnections] : [];
+  if (cfg.dbUrl && !list.includes(cfg.dbUrl)) {
+    list.unshift(cfg.dbUrl);
+  }
+  return list;
+}
+
+/**
+ * Add a connection to saved connection history in config.
+ * Moves to front if already present. Caps at 20 entries.
+ */
+export function addSavedConnection(rawUrl: string): void {
+  if (!rawUrl || typeof rawUrl !== 'string') return;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return;
+
+  const current = getSavedConnections();
+  const filtered = current.filter((u) => u !== trimmed);
+  const updated = [trimmed, ...filtered].slice(0, 20);
+
+  writeConfig({
+    savedConnections: updated,
+  });
+}
+
+/**
+ * Remove a connection from saved history by URL string or 1-based index.
+ */
+export function removeSavedConnection(target: string | number): boolean {
+  const current = getSavedConnections();
+  let updated: string[];
+
+  if (typeof target === 'number') {
+    const idx = target - 1;
+    if (idx < 0 || idx >= current.length) return false;
+    updated = current.filter((_, i) => i !== idx);
+  } else {
+    const normalized = target.trim();
+    if (!current.includes(normalized)) return false;
+    updated = current.filter((u) => u !== normalized);
+  }
+
+  writeConfig({
+    savedConnections: updated,
+  });
+  return true;
+}
+

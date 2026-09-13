@@ -16,7 +16,7 @@ const { Pool } = pg;
 export class PostgresAdapter implements DatabaseAdapter {
   readonly type = 'postgres';
   private pool: pg.Pool | null = null;
-  private connectionUrl: string;
+  public readonly connectionUrl: string;
   private cachedSchema: DatabaseSchema | null = null;
   public databaseName = 'postgres';
 

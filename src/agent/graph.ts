@@ -100,6 +100,7 @@ export function createDatabaseAgent(config: GraphConfig) {
 
   // Node 2: identify_targets
   async function identifyTargetsNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
+    const historyMessages: BaseMessage[] = state.messages.slice(-4);
     const prompt = `Based on this user request: "${state.userInput}"
 And the available database schema:
 ${state.schemaSummary}
@@ -108,7 +109,10 @@ List the relevant table names (PostgreSQL) or collection names (MongoDB) needed 
 Respond with a JSON array of string names only, e.g. ["users", "orders"]. Do not include markdown codeblocks or extra text.`;
 
     try {
-      const response = await model.invoke([new HumanMessage(prompt)]);
+      const response = await model.invoke([
+        ...historyMessages,
+        new HumanMessage(prompt),
+      ]);
       const content = typeof response.content === 'string' ? response.content.trim() : '';
       const match = content.match(/\[[\s\S]*?\]/);
       const targets = match ? JSON.parse(match[0]) : [];
@@ -346,15 +350,19 @@ Ground your response strictly in the query results above. Never hallucinate rows
     try {
       const response = await model.invoke([new HumanMessage(prompt)]);
       const conclusion = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      const queryStr = state.generatedQuery?.sql || state.generatedQuery?.rawDisplay;
+      const historyAiText = queryStr ? `[Executed Query: ${queryStr}]\n${conclusion}` : conclusion;
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(conclusion)],
+        messages: [new HumanMessage(state.userInput), new AIMessage(historyAiText)],
       };
     } catch (err: any) {
       const conclusion = `Query executed successfully (${res.rowCount ?? 0} rows, ${res.durationMs}ms).`;
+      const queryStr = state.generatedQuery?.sql || state.generatedQuery?.rawDisplay;
+      const historyAiText = queryStr ? `[Executed Query: ${queryStr}]\n${conclusion}` : conclusion;
       return {
         conclusion,
-        messages: [new HumanMessage(state.userInput), new AIMessage(conclusion)],
+        messages: [new HumanMessage(state.userInput), new AIMessage(historyAiText)],
       };
     }
   }

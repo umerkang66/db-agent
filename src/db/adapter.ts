@@ -104,6 +104,7 @@ export interface QueryResult {
 export interface DatabaseAdapter {
   readonly type: DatabaseType;
   readonly databaseName: string;
+  readonly connectionUrl: string;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   isConnected(): boolean;

@@ -12,6 +12,10 @@ import {
   maskApiKey,
   getConfigFilePath,
   getDefaultModelForProvider,
+  removeApiKey,
+  getSavedConnections,
+  addSavedConnection,
+  removeSavedConnection,
 } from './config/index.js';
 import { LLMProvider } from './config/types.js';
 import { createDatabaseAdapter, detectDatabaseType } from './db/connection.js';
@@ -96,6 +100,18 @@ const configCmd = program
     'Enable or disable default terminal markdown rendering (true | false)',
   )
   .option(
+    '--remove-key [provider]',
+    'Remove stored API key for a provider (google | openai | anthropic | all)',
+  )
+  .option(
+    '--connections',
+    'List all saved database connections',
+  )
+  .option(
+    '--remove-connection <target>',
+    'Remove a saved database connection by URL or index',
+  )
+  .option(
     '--show',
     'Display current stored configuration (with masked secrets)',
   )
@@ -106,8 +122,42 @@ const configCmd = program
       return;
     }
 
+    if (opts.connections) {
+      const list = getSavedConnections();
+      if (list.length === 0) {
+        console.log(chalk.yellow('\nNo saved database connections found.\n'));
+      } else {
+        console.log(chalk.bold.cyan('\nSaved Database Connections:'));
+        list.forEach((url, i) => {
+          console.log(`  [${i + 1}] ${maskUrl(url)}`);
+        });
+        console.log('');
+      }
+      return;
+    }
+
+    if (opts.removeConnection) {
+      const removed = removeSavedConnection(opts.removeConnection);
+      if (removed) {
+        console.log(chalk.green(`Removed connection from saved history.`));
+      } else {
+        console.log(chalk.red(`Connection "${opts.removeConnection}" not found in history.`));
+      }
+      return;
+    }
+
+    if (opts.removeKey !== undefined) {
+      const prov = typeof opts.removeKey === 'string' && opts.removeKey.trim()
+        ? opts.removeKey.toLowerCase()
+        : 'all';
+      removeApiKey(prov as any);
+      console.log(chalk.green(`Removed API key for "${prov}" from ~/.sandal/config.json.`));
+      return;
+    }
+
     if (opts.show) {
       const cfg = readConfig();
+      const saved = getSavedConnections();
       console.log(
         chalk.bold.cyan('\nSaved Configuration (~/.sandal/config.json):'),
       );
@@ -122,6 +172,9 @@ const configCmd = program
       );
       console.log(
         `  Markdown Rendering: ${cfg.renderMarkdown !== false ? chalk.green('enabled') : chalk.yellow('disabled')}`,
+      );
+      console.log(
+        `  Saved Connections:  ${saved.length > 0 ? chalk.cyan(`${saved.length} connection(s)`) : chalk.gray('None')}`,
       );
       console.log(
         `  Gemini Key:         ${cfg.geminiApiKey ? chalk.yellow(maskApiKey(cfg.geminiApiKey)) : chalk.gray('Not set')}`,
@@ -139,6 +192,7 @@ const configCmd = program
     if (opts.setDb) {
       detectDatabaseType(opts.setDb); // validate scheme
       updates.dbUrl = opts.setDb;
+      addSavedConnection(opts.setDb);
       console.log(
         chalk.green(`Updated default database URL: ${maskUrl(opts.setDb)}`),
       );
@@ -357,6 +411,7 @@ async function runCli(opts: {
         `Connected to ${adapter.type.toUpperCase()} database: ${adapter.databaseName}`,
       ),
     );
+    addSavedConnection(dbUrl);
   } catch (err: any) {
     dbSpinner.fail(chalk.red(`Failed to connect to database: ${err.message}`));
     process.exit(1);
@@ -375,6 +430,7 @@ async function runCli(opts: {
     model,
     provider,
     modelName,
+    apiKey,
     strictMode: opts.strictMode,
     allowFullWipe: opts.allowFullWipe,
     rowThreshold: opts.rowThreshold,

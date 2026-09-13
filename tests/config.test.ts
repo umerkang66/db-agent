@@ -81,4 +81,48 @@ describe('Configuration & Credential Masking', () => {
       expect(anthropicRes.apiKey).toBe('sk-ant-anthropic-key-77777');
     });
   });
+
+  describe('Saved Connection History & Key Removal', () => {
+    it('manages saved connections list with deduplication', async () => {
+      const { addSavedConnection, getSavedConnections, removeSavedConnection } = await import(
+        '../src/config/index.js'
+      );
+
+      const url1 = 'postgresql://localhost:5432/test_history_db1';
+      const url2 = 'mongodb://localhost:27017/test_history_mongo';
+
+      addSavedConnection(url1);
+      addSavedConnection(url2);
+
+      let saved = getSavedConnections();
+      expect(saved).toContain(url1);
+      expect(saved).toContain(url2);
+
+      // Re-adding url1 moves it to front and deduplicates
+      addSavedConnection(url1);
+      saved = getSavedConnections();
+      expect(saved[0]).toBe(url1);
+      expect(saved.filter((u) => u === url1).length).toBe(1);
+
+      // Remove url1
+      const removed = removeSavedConnection(url1);
+      expect(removed).toBe(true);
+      expect(getSavedConnections()).not.toContain(url1);
+
+      // Clean up url2
+      removeSavedConnection(url2);
+    });
+
+    it('removes stored API keys properly', async () => {
+      const { writeConfig, readConfig, removeApiKey } = await import(
+        '../src/config/index.js'
+      );
+
+      writeConfig({ geminiApiKey: 'test-gemini-to-remove' });
+      expect(readConfig().geminiApiKey).toBe('test-gemini-to-remove');
+
+      removeApiKey('google');
+      expect(readConfig().geminiApiKey).toBeUndefined();
+    });
+  });
 });

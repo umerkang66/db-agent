@@ -14,7 +14,7 @@ export class MongoAdapter implements DatabaseAdapter {
   readonly type = 'mongodb';
   private client: MongoClient | null = null;
   private db: Db | null = null;
-  private connectionUrl: string;
+  public readonly connectionUrl: string;
   private cachedSchema: DatabaseSchema | null = null;
   public databaseName = 'admin';
 

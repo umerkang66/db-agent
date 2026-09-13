@@ -167,6 +167,15 @@ Dot commands provide direct utility functions without issuing requests to the LL
 | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `.tables` or `.collections` | Lists all discovered database tables or MongoDB collections with current row counts.                  |
 | `.schema [name]`            | Displays column names, data types, nullability constraints, and primary keys for the specified table. |
+| `.connect` or `.switch`     | Shows saved database connections; select by number or enter a new URL (preserves chat memory).       |
+| `.model [name]`             | Displays current model or switches to a new model on the fly.                                         |
+| `.provider [name]`          | Switches active LLM provider (`google`, `openai`, or `anthropic`).                                    |
+| `.key [remove \| set]`      | Displays active API key, removes it from config, or updates it live.                                 |
+| `.chats`                    | Lists all saved chat sessions with message counts and last active times.                              |
+| `.chat <id \| number>`      | Switches to a specific chat session and restores its conversation memory.                             |
+| `.new`                      | Starts a fresh chat session with clean memory.                                                        |
+| `.history`                  | Displays full conversation turn history for the active chat session.                                  |
+| `.clear-chat`               | Clears message history for the current chat session.                                                  |
 | `.md [file\|text]`          | Renders markdown file or inline markdown text with syntax highlighting directly in the terminal.      |
 | `.refresh`                  | Invalidates cached schema metadata and re-introspects the live database.                              |
 | `.clear`                    | Clears the terminal screen.                                                                           |
@@ -240,6 +249,65 @@ echo "# Hello Terminal" | npx sandal-db md
 # Disable markdown rendering if plain text is desired
 npx sandal-db --no-markdown postgresql://...
 ```
+
+#### Connection History and Database Switching
+
+SANDAL tracks your previous database connections automatically in `~/.sandal/config.json`. Inside the interactive REPL, switch databases at any time without restarting your session:
+
+```text
+sandal [postgres]> .connect
+
+Database Connections:
+  [1] postgresql://postgres:***@localhost:5432/analytics (Current)
+  [2] mongodb://app_user:***@cluster0.mongodb.net/production
+  [N] Enter a new connection URL
+  [C] Cancel
+
+Select a connection [number, N, C]: 2
+```
+
+When you switch databases, your **conversation history and chat memory are preserved**, allowing you to continue querying or comparing insights across databases.
+
+From the command line:
+```bash
+# List all saved database connections
+npx sandal-db config --connections
+
+# Remove a connection from saved history
+npx sandal-db config --remove-connection 2
+```
+
+#### Changing Models, Providers, and API Keys Live
+
+Modify your AI configuration during an active session:
+
+- `.model` — View recommended models for your provider (e.g. `gemini-2.5-flash`, `gpt-4o`, `claude-3-5-sonnet-latest`) or type a custom model name.
+- `.provider` — Switch between Google Gemini, OpenAI, and Anthropic Claude.
+- `.key` — View masked key information.
+- `.key remove` — Remove the stored API key for the current provider from `~/.sandal/config.json`.
+- `.key set <new-key>` — Update your API key dynamically.
+
+From the command line:
+```bash
+# Remove stored API key for a specific provider
+npx sandal-db config --remove-key google
+
+# Remove all stored API keys
+npx sandal-db config --remove-key all
+```
+
+#### Per-Chat Memory and Multi-Turn Sessions
+
+SANDAL provides persistent multi-turn chat memory stored per chat session in `~/.sandal/chats/`:
+
+- **Multi-Turn Context**: Resolves follow-up queries and pronouns (e.g., `"Show top customers"` followed by `"Now count how many of them are active"`).
+- **Query Memory**: Remembers previous queries and schema references within the chat session.
+- **Session Management**:
+  - `.chats` — Displays all saved chat sessions with message counts, titles, and dates.
+  - `.chat <id|num>` — Switches to an existing chat session and reloads its memory.
+  - `.new` — Starts a brand new chat session with clean memory.
+  - `.history` — Reviews the conversation history of the current chat.
+  - `.clear-chat` — Clears message memory for the current session.
 
 ---
 
